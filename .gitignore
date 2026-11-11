@@ -42,6 +42,9 @@
 build/
 Build/
 build-*/
+cmake-build-*/
+.vscode/
+.idea/
 
 # CMake generated files
 CMakeFiles/
