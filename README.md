@@ -39,17 +39,21 @@ cmake --build build --config Debug
 ## 结构
 
 ```
-CMakeLists.txt                    # 根构建脚本：SDL3 + FetchContent(Vulkan/DXC) + 子目录
+CMakeLists.txt                    # 根构建脚本：接线模块与可执行文件
 cmake/spv_to_header.cmake         # 将 SPIR-V 二进制转为 C++ 头文件
 shaders/triangle.vert.hlsl        # 顶点着色器（HLSL，DXC 编译为 SPIR-V）
 shaders/triangle.frag.hlsl        # 片元着色器（HLSL，DXC 编译为 SPIR-V）
 src/main.cpp                      # 入口：驱动渲染循环
+src/infra/                        # Infra 基础模块（仅依赖标准库）
+  CMakeLists.txt                  #   Infra INTERFACE 库（header-only）
+  containers/ObjectPool.hpp
+  tracer/Benchmark.hpp
 src/runtime/platform/             # GenericPlatform 平台抽象（header-only）
   IGenericPlatform.h              #   IGenericPlatform 接口
   CMakeLists.txt                  #   GenericPlatform INTERFACE 库
-src/runtime/renderer/             # Renderer 库（SDL 窗口 + 事件循环）
+src/runtime/renderer/             # Renderer 渲染模块（自包含 SDL3/Vulkan/DXC/着色器）
   Renderer.h / Renderer.cpp
-  CMakeLists.txt                  #   Renderer 静态库（链接 Rhi）
+  CMakeLists.txt                  #   Renderer 静态库（链接 Infra + Rhi）
   rhi/                            # Rhi 库（Vulkan 后端）
     Rhi.h / Rhi.cpp
     CMakeLists.txt                #   Rhi 静态库（链接 Vulkan::Headers / SDL3）
@@ -61,9 +65,9 @@ external/SDL                      # 第三方 SDL3 源码
 - **不使用 C++20 模块**：全部用传统头文件 + `#include`；Vulkan 通过
   `#include <vulkan/vulkan.hpp>` 和 `<vulkan/vulkan_raii.hpp>` 使用 vulkan-hpp
   （`vk::` / `vk::raii`），不使用 C 的 `Vk*` API。
-- **三层库**：`GenericPlatform`（平台接口）→ `Rhi`（Vulkan 后端）→
-  `Renderer`（窗口 + 事件循环）；应用层只 `#include "Renderer.h"`，不接触
-  SDL 或 Vulkan。
+- **模块分层**：`Infra`（标准库基础工具）为独立模块；`Renderer` 是自包含的
+  渲染模块（内部含 `Rhi` Vulkan 后端与 SDL3 窗口）；`GenericPlatform` 提供
+  平台接口。应用层只 `#include "Renderer.h"`，不接触 SDL 或 Vulkan。
 - 命名规范：
   - 函数名：动词开头 + 小驼峰（`drawFrame`、`createInstance`、`getFrameCount`）。
   - bool 变量：一般疑问词 + 大驼峰（`IsQuit`、`IsFramebufferResized`、`AreExtensionsSupported`）。

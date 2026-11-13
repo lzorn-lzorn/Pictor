@@ -1,10 +1,151 @@
-# Renderer — SDL window + event loop glue, delegating drawing to the Rhi.
+# Renderer — a self-contained rendering module.
+#
+# This directory is the "renderer" module. It vendors SDL3, fetches the Vulkan
+# headers, downloads the DXC shader compiler and compiles the HLSL shaders to
+# SPIR-V — all internally. From the outside it only exposes the `Renderer`
+# target and depends on the Infra module plus the C++ standard library.
+
+include(FetchContent)
+
+# ---------------------------------------------------------------------------
+# SDL3 (vendored under external/SDL)
+# ---------------------------------------------------------------------------
+# Build only the shared SDL3 library, skip tests/examples/docs for speed.
+set(SDL_SHARED ON CACHE BOOL "" FORCE)
+set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_SOURCE_DIR}/external/SDL "${CMAKE_BINARY_DIR}/external/SDL"
+                 EXCLUDE_FROM_ALL)
+
+# ---------------------------------------------------------------------------
+# Vulkan — headers (vulkan.h / vulkan.hpp / vulkan_raii.hpp), pinned tag.
+#
+# No Vulkan SDK is required: vk::raii loads the runtime loader (vulkan-1.dll,
+# shipped by the GPU driver) dynamically, so we only need the headers here.
+# ---------------------------------------------------------------------------
+set(VULKAN_HEADERS_TAG "vulkan-sdk-1.4.350.0")
+
+FetchContent_Declare(Vulkan-Headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+    GIT_TAG        ${VULKAN_HEADERS_TAG}
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(Vulkan-Headers)
+
+# ---------------------------------------------------------------------------
+# DXC (DirectX Shader Compiler) — prebuilt Windows binary, pinned release.
+#
+# A prebuilt package (dxc.exe + dxcompiler.dll) is downloaded and extracted
+# once at configure time; the hash pins the exact artifact. Set -DDXC_EXECUTABLE
+# to a local dxc.exe to skip the download.
+# ---------------------------------------------------------------------------
+set(DXC_VERSION "v1.9.2609")
+set(DXC_URL "https://github.com/microsoft/DirectXShaderCompiler/releases/download/${DXC_VERSION}/dxc_2026_09_29.zip")
+set(DXC_SHA256 "ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1")
+
+set(DXC_EXECUTABLE "" CACHE FILEPATH "Path to dxc.exe (empty = auto-download a pinned release)")
+
+if(NOT DXC_EXECUTABLE)
+    set(DXC_EXTRACT_DIR "${CMAKE_BINARY_DIR}/_dxc")
+    if(NOT EXISTS "${DXC_EXTRACT_DIR}")
+        file(DOWNLOAD "${DXC_URL}" "${CMAKE_BINARY_DIR}/dxc.zip"
+             EXPECTED_HASH "SHA256=${DXC_SHA256}"
+             STATUS download_status)
+        list(GET download_status 0 download_code)
+        if(NOT download_code EQUAL 0)
+            message(FATAL_ERROR "Failed to download DXC from ${DXC_URL}: ${download_status}")
+        endif()
+        file(MAKE_DIRECTORY "${DXC_EXTRACT_DIR}")
+        file(ARCHIVE_EXTRACT INPUT "${CMAKE_BINARY_DIR}/dxc.zip" DESTINATION "${DXC_EXTRACT_DIR}")
+    endif()
+
+    # The package ships bin/{arm64,x64,x86}/dxc.exe; pick the host architecture.
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(_dxc_arch "x64")
+    else()
+        set(_dxc_arch "x86")
+    endif()
+    set(DXC_EXECUTABLE "${DXC_EXTRACT_DIR}/bin/${_dxc_arch}/dxc.exe")
+    if(NOT EXISTS "${DXC_EXECUTABLE}")
+        file(GLOB_RECURSE DXC_EXE_CANDIDATES "${DXC_EXTRACT_DIR}/dxc.exe")
+        if(NOT DXC_EXE_CANDIDATES)
+            message(FATAL_ERROR "dxc.exe not found in the downloaded DXC package.")
+        endif()
+        list(GET DXC_EXE_CANDIDATES 0 DXC_EXECUTABLE)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Shaders: compile HLSL -> SPIR-V -> embed as C++ headers
+# ---------------------------------------------------------------------------
+set(SHADER_SOURCE_DIR ${CMAKE_SOURCE_DIR}/shaders)
+set(SHADER_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders)
+file(MAKE_DIRECTORY ${SHADER_GENERATED_DIR})
+
+set(SHADER_FILES
+    triangle.vert.hlsl
+    triangle.frag.hlsl
+)
+
+set(GENERATED_SHADER_HEADERS "")
+
+foreach(shader IN LISTS SHADER_FILES)
+    # "triangle.vert.hlsl" -> "triangle.vert" -> "triangle_vert"
+    string(REPLACE ".hlsl" "" shader_stem "${shader}")
+    string(REPLACE "." "_" shader_var "${shader_stem}")
+
+    # Choose the DXC target profile from the shader stage.
+    if(shader MATCHES "vert")
+        set(dxc_profile "vs_6_0")
+    elseif(shader MATCHES "frag")
+        set(dxc_profile "ps_6_0")
+    else()
+        message(FATAL_ERROR "Cannot infer shader stage from '${shader}'.")
+    endif()
+
+    set(spv    ${SHADER_GENERATED_DIR}/${shader_var}.spv)
+    set(header ${SHADER_GENERATED_DIR}/${shader_var}_spv.h)
+
+    add_custom_command(
+        OUTPUT ${spv}
+        COMMAND ${DXC_EXECUTABLE} -spirv -T ${dxc_profile} -E main -Fo ${spv}
+                ${SHADER_SOURCE_DIR}/${shader}
+        DEPENDS ${SHADER_SOURCE_DIR}/${shader}
+        COMMENT "Compiling ${shader} to SPIR-V (DXC, ${dxc_profile})"
+        VERBATIM
+    )
+
+    add_custom_command(
+        OUTPUT ${header}
+        COMMAND ${CMAKE_COMMAND}
+                -DINPUT=${spv}
+                -DOUTPUT=${header}
+                -DNAME=${shader_var}_spv
+                -P ${CMAKE_SOURCE_DIR}/cmake/spv_to_header.cmake
+        DEPENDS ${spv} ${CMAKE_SOURCE_DIR}/cmake/spv_to_header.cmake
+        COMMENT "Embedding ${shader} SPIR-V into ${shader_var}_spv.h"
+        VERBATIM
+    )
+
+    list(APPEND GENERATED_SHADER_HEADERS ${header})
+endforeach()
+
+add_custom_target(shaders ALL DEPENDS ${GENERATED_SHADER_HEADERS})
+
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
 add_subdirectory(rhi)
 
 add_library(Renderer STATIC Renderer.cpp)
 
 target_include_directories(Renderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_link_libraries(Renderer PUBLIC Rhi SDL3::SDL3)
+# Infra is this module's only cross-module dependency. Rhi is a sub-target of
+# this module; SDL3 and the Vulkan headers are rendering internals whose setup
+# is encapsulated in this file.
+target_link_libraries(Renderer PUBLIC Infra Rhi SDL3::SDL3)
 
 target_compile_features(Renderer PUBLIC cxx_std_23)
