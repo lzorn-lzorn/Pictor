@@ -15,7 +15,7 @@
 #include <type_traits>
 #include <utility>
 
-#if defined(__cpp_rtti) || defined(__GXX_RTTT) || (defined(_CPPRTTI) && _CPPRTTI)
+#if defined(__cpp_rtti) || defined(__GXX_RTTI) || (defined(_CPPRTTI) && _CPPRTTI)
 #   include <typeinfo>
 #   define HAS_RTTI 1
 #else
@@ -24,7 +24,7 @@
 
 // @notice 用 __attribute__((visibility("default"))) 让 TypeId 跨动态库唯一.
 // @notice MSVC 则没有类似的方式
-#if defined(__GUNC__) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
 #   define ANY_EXPORT __attribute__((visibility("default")))
 #else
 #   define ANY_EXPORT
@@ -34,13 +34,13 @@ namespace any_detail
 {
 using TypeId_t = const void*;
 
-template <typename Ty>
+template <typename T>
 inline constexpr char TypeIdTag = 0;
 
-template <typename Ty>
+template <typename T>
 ANY_EXPORT TypeId_t getTypeId() noexcept
 {
-    return &TypeIdTag<std::decay_t<Ty>>;
+    return &TypeIdTag<std::decay_t<T>>;
 }
 
 constexpr std::size_t SmallBufferOptimizeSize = 3 * sizeof(void*);
@@ -51,8 +51,9 @@ union Storage_t
     void* Ptr;
     std::byte Buffer[SmallBufferOptimizeSize];
     Storage_t() noexcept : Ptr(nullptr) {}
-    ~Storage_t() {}
 };
+/* @notice ~Storage_t() {} 是用户提供的析构函数, 会使得 trivially copyable 丢失, 导致之后的 memcpy 是 UB */
+static_assert(std::is_trivially_copyable_v<Storage_t>, "Storage_t must be trivially copyable to allow memcpy-based swap");
 
 struct VTable_t
 {
@@ -68,39 +69,39 @@ struct VTable_t
     TypeId_t (*GetTypeId)() noexcept;
 
 #if HAS_RTTI
-    const std::type_info& (GetTypeInfo)() noexcept;
+    const std::type_info& (*GetTypeInfo)() /* noexcept */;
 #endif
 };
 
-template <typename Ty>
+template <typename T>
 struct Ops
 {
     static constexpr bool IsUseSmallBufferOptimize
-        = sizeof(Ty) <= SmallBufferOptimizeSize &&
-            alignof(Ty) <= SmallBufferOptimizeAlign &&
-                std::is_nothrow_move_constructible_v<Ty>;
+        = sizeof(T) <= SmallBufferOptimizeSize &&
+            alignof(T) <= SmallBufferOptimizeAlign &&
+                std::is_nothrow_move_constructible_v<T>;
 
-    static Ty* getPtr(Storage_t& Storage) noexcept
+    static T* getPtr(Storage_t& Storage) noexcept
     {
         if constexpr (IsUseSmallBufferOptimize)
         {
-            return std::launder(reinterpret_cast<Ty*>(Storage.Buffer));
+            return std::launder(reinterpret_cast<T*>(Storage.Buffer));
         }
         else
         {
-            return static_cast<Ty*>(Storage.Ptr);
+            return static_cast<T*>(Storage.Ptr);
         }
     }
 
-    static Ty* getPtr(Storage_t const& Storage) noexcept
+    static const T* getPtr(Storage_t const& Storage) noexcept
     {
         if constexpr (IsUseSmallBufferOptimize)
         {
-            return std::launder(reinterpret_cast<const Ty*>(Storage.Buffer));
+            return std::launder(reinterpret_cast<const T*>(Storage.Buffer));
         }
         else
         {
-            return static_cast<const Ty*>(Storage.Ptr);
+            return static_cast<const T*>(Storage.Ptr);
         }
     }
 
@@ -109,11 +110,11 @@ struct Ops
     {
         if constexpr (IsUseSmallBufferOptimize)
         {
-            std::construct_at(reinterpret_cast<const Ty*>(Storage.Buffer), std::forward<Args>(InArgs)...);
+            std::construct_at(reinterpret_cast<const T*>(Storage.Buffer), std::forward<Args>(InArgs)...);
         }
         else
         {
-            Storage.Ptr = new Ty(std::forward<Args>(InArgs)...);
+            Storage.Ptr = new T(std::forward<Args>(InArgs)...);
         }
     }
 
@@ -121,11 +122,11 @@ struct Ops
     {
         if constexpr (IsUseSmallBufferOptimize)
         {
-            std::destroy_at(std::launder(reinterpret_cast<Ty*>(Storage.Buffer)));
+            std::destroy_at(std::launder(reinterpret_cast<T*>(Storage.Buffer)));
         }
         else
         {
-            delete static_cast<Ty*>(Storage.Ptr);
+            delete static_cast<T*>(Storage.Ptr);
         }
     }
 
@@ -133,11 +134,11 @@ struct Ops
     {
         if constexpr (IsUseSmallBufferOptimize)
         {
-            std::construct_at(reinterpret_cast<Ty*>(Dst.Ptr), Src.Ptr);
+            std::construct_at(reinterpret_cast<T*>(Dst.Buffer), Src.Ptr);
         }
         else
         {
-            Dst.Ptr = new Ty(*getPtr(Src));
+            Dst.Ptr = new T(*getPtr(Src));
         }
     }
 
@@ -145,8 +146,8 @@ struct Ops
     {
         if constexpr (IsUseSmallBufferOptimize)
         {
-            std::construct_at(reinterpret_cast<Ty*>(Dst.Buffer), std::move(*getPtr(Src)));
-            std::destroy_at(std::launder(reinterpret_cast<Ty*>(Dst.Ptr)));
+            std::construct_at(reinterpret_cast<T*>(Dst.Buffer), std::move(*getPtr(Src)));
+            std::destroy_at(std::launder(reinterpret_cast<T*>(Dst.Buffer)));
         }
         else
         {
@@ -161,12 +162,12 @@ struct Ops
 #endif
     ) noexcept
     {
-        if (Id == getTypeId<Ty>())
+        if (Id == getTypeId<T>())
         {
             return getPtr(Storage);
         }
 #if HAS_RTTI
-      if (QueryTypeInfo && *QueryTypeInfo == typeid(Ty))
+      if (QueryTypeInfo && *QueryTypeInfo == typeid(T))
       {
           return getPtr(Storage);
       }
@@ -174,22 +175,22 @@ struct Ops
         return nullptr;
     }
 
-    static TypeId_t getTypeId() noexcept { return getTypeId<Ty>(); }
+    static TypeId_t getTypeId() noexcept { return getTypeId<T>(); }
 
 #if HAS_RTTI
-    static const std::type_info& getTypeInfo() noexcept { return typeid(Ty); }
+    static const std::type_info& getTypeInfo() /* noexcept */ { return typeid(T); }
 #endif
 };
 
-template <typename Ty>
+template <typename T>
 inline constexpr VTable_t VTableFor = {
-    &Ops<Ty>::destroy,
-    &Ops<Ty>::copy,
-    &Ops<Ty>::mvoe,
-    &Ops<Ty>::cast,
-    &Ops<Ty>::getTypeId,
+    &Ops<T>::destroy,
+    &Ops<T>::copy,
+    &Ops<T>::move,
+    &Ops<T>::cast,
+    &Ops<T>::getTypeId,
 #if HAS_RTTI
-    &Ops<Ty>::getTypeInfo,
+    &Ops<T>::getTypeInfo,
 #endif
 };
 
@@ -235,16 +236,16 @@ public:
         std::enable_if_t<!std::is_same_v<typename DT, Any>, int32_t> = 0,
         std::enable_if_t<std::is_copy_constructible_v<DT>, int32_t> = 0
     >
-    Any(Any && Other) noexcept
+    explicit Any(T&& Value) noexcept
     {
-        any_detail::Ops<DT>::construct(Storage, std::forward<T>(Other));
+        any_detail::Ops<DT>::construct(Storage, std::forward<T>(Value));
         VTable = &any_detail::VTableFor<DT>;
     }
 
-    template <typename Ty, typename ...Args>
-    explicit Any(std::in_place_type_t<Ty>, Args&&... ConstructParams)
+    template <typename T, typename ...Args>
+    explicit Any(std::in_place_type_t<T>, Args&&... ConstructParams)
     {
-        using DT = std::decay_t<Ty>;
+        using DT = std::decay_t<T>;
         static_assert(std::is_copy_constructible_v<DT>, "Type must be copy constructible");
         any_detail::Ops<DT>::construct(Storage, std::forward<Args>(ConstructParams)...);
         VTable = &any_detail::VTableFor<DT>;
@@ -253,7 +254,7 @@ public:
     template <typename T, typename U, typename ...Args>
     explicit Any(std::in_place_type_t<T>, std::initializer_list<U> InitParamList, Args&&... ConstructParams)
     {
-        using DT = std::decay_t<Ty>;
+        using DT = std::decay_t<T>;
         static_assert(std::is_copy_constructible_v<DT>, "Type must be copy constructible");
         any_detail::Ops<DT>::construct(Storage, InitParamList, std::forward<Args>(ConstructParams)...);
         VTable = &any_detail::VTableFor<DT>;
@@ -271,7 +272,7 @@ public:
         if (this != &Other) {
             reset();
             if (Other.VTable) {
-                Other.VTable->move(Storage, Other.Storage);
+                Other.VTable->Move(Storage, Other.Storage);
                 VTable = Other.VTable;
                 Other.VTable = nullptr;
             }
@@ -294,9 +295,9 @@ public:
         using DT = std::decay_t<T>;
         static_assert(std::is_copy_constructible_v<DT>);
         reset();
-        fast_any_detail::Ops<DT>::construct(Storage, std::forward<Args>(ConstructParams)...);
-        vtable_ = &fast_any_detail::vtable_for<DT>;
-        return *fast_any_detail::Ops<DT>::ptr(Storage);
+        any_detail::Ops<DT>::construct(Storage, std::forward<Args>(ConstructParams)...);
+        VTable = &any_detail::VTableFor<DT>;
+        return *any_detail::Ops<DT>::getPtr(Storage);
     }
 
     template <class T, class U, class... Args>
@@ -314,31 +315,44 @@ public:
     {
         if (VTable)
         {
-            VTable->destroy(Storage);
+            VTable->Destructor(Storage);
             VTable = nullptr;
         }
     }
 
     void swap(Any& Other) noexcept
     {
-        Storage Tmp;
-        std::memcpy(&Tmp, &Storage, sizeof(Storage));
-        std::memcpy(&Storage, &Other.Storage, sizeof(Storage));
-        std::memcpy(&Other.Storage, &Tmp, sizeof(Storage));
+        Storage_t Tmp;
+        std::memcpy(&Tmp, &Storage, sizeof(Storage_t));
+        std::memcpy(&Storage, &Other.Storage, sizeof(Storage_t));
+        std::memcpy(&Other.Storage, &Tmp, sizeof(Storage_t));
         std::swap(VTable, Other.VTable);
     }
 
     [[nodiscard]] bool HasValue() const noexcept { return VTable != nullptr; }
     explicit operator bool() const noexcept { return HasValue(); }
 
-    TypeId_t getTypeId() const noexcept { return VTable ? VTable->getTypeId() : nullptr; }
+    TypeId_t getTypeId() const noexcept { return VTable ? VTable->GetTypeId() : nullptr; }
 
 #if HAS_RTTI
     const std::type_info& type() const noexcept
     {
-        return VTable ? VTable->getTypeInfo() : typeid(void);
+        return VTable ? VTable->GetTypeInfo() : typeid(void);
     }
 #endif
+
+    template <typename Ty>
+    const std::decay_t<Ty>* castPtr() const noexcept
+    {
+        using DT = std::decay_t<Ty>;
+        if (!VTable) return nullptr;
+        const void* P = VTable->Cast(Storage, any_detail::getTypeId<DT>()
+    #if HAS_RTTI
+            , &typeid(DT)
+    #endif
+        );
+        return static_cast<const DT*>(P);
+    }
 
     template <typename Ty>
     std::decay_t<Ty>* castPtr() noexcept
