@@ -1,80 +1,30 @@
-// Benchmark.hpp
-//
-// 一个极简的 C++14 单头文件 benchmark / 性能分析工具. 
-//
-// 整个库只由这一个头文件组成, 仅依赖 C++ 标准库. 提供两种互补的模式: 
-//
-//   1. 迭代基准(Iteration benchmarks)—— 注册一个 void() 函数, 测量它运行 N 次的
-//      耗时, 然后把结果序列化为 JSON. 
-//
-//   2. 按帧分析(Frame-aware profiling)—— 全局 manager 记录某段代码的耗时, 以及它
-//      在每一帧里执行了多少次. 在帧首尾插入 beginFrame()/endFrame(), 用计时器或作用域
-//      宏包裹代码段, 最后把累计统计写入 JSON. 
-//
-// 提供两种 manager, 各自是独立的单例: 
-//
-//   * BenchmarkManager             —— 单线程, 零加锁开销. 
-//   * ThreadSafeBenchmarkManager   —— 线程安全, 内部用 std::mutex 保护. 
-//
-// 时间单位: 耗时始终在内部以纳秒累计, 仅在序列化时换算. 单位可选(默认 ms): 
-// ETimeUnit::Hour / Minute / Second / Millisecond / Nanosecond. 生成的 JSON 还会附带
-// "//" 注释说明每个字段(JSONC 风格), 可用相应开关关闭. 
-//
-// 单次测量输出槽(sink): 每次测量完成后, 还可立即把这次结果序列化为单行 JSON 并输出, 
-// 这样不必等最后的 write 就能实时看到. 槽由 EMeasurementSink 选择
-// (None / StdOut / StdErr / File / Callback)；累积的 JSON 保存在内存中, 可用
-// writeMeasurementLog() 一次性写出. 
-//
-// 用法(迭代基准): 
-//
-//   #include "Benchmark.hpp"
-//
-//   static void benchmarkSqrt() { ... }
-//   BENCHMARK(benchmarkSqrt);
-//
-//   int main()
-//   {
-//       Bm::BenchmarkOptions Options;
-//       Options.TimeUnit = Bm::ETimeUnit::Millisecond; // 默认
-//       return Bm::runAll("result.json", Options);
-//   }
-//
-// 用法(单线程按帧分析): 
-//
-//   Bm::BenchmarkManager& Manager = Bm::BenchmarkManager::get();
-//   while (Running)
-//   {
-//       Manager.beginFrame();
-//       { Bm::BenchmarkTimer Timer("physics"); updatePhysics(); }
-//       { Bm::BenchmarkTimer Timer("render");  updateRender();  }
-//       Manager.endFrame();
-//   }
-//   Manager.writeJson("profile.json");
-//
-// 用法(线程安全按帧分析): 
-//
-//   Bm::ThreadSafeBenchmarkManager& Manager =
-//       Bm::ThreadSafeBenchmarkManager::get();
-//   // 任意线程现在都可以使用 ThreadSafeBenchmarkTimer / recordTime. 
-//   { Bm::ThreadSafeBenchmarkTimer Timer("worker"); doWork(); }
-//   Manager.writeJson("profile.json");
-//
-// 用法(单次测量输出槽): 
-//
-//   Bm::BenchmarkManager& Manager = Bm::BenchmarkManager::get();
-//   Manager.setMeasurementSink(Bm::EMeasurementSink::StdOut);   // 实时可见
-//   { Bm::BenchmarkTimer Timer("job"); doJob(); }               // 输出一行 JSON
-//   Manager.writeMeasurementLog("measurements.json");           // 最后全部写出
-//
-// 用法(计时内打桩 / 记录点):
-//
-//   Bm::BenchmarkTimer Timer("job");
-//   doA();
-//   Timer.mark("afterA");   // 记录自起点到这里的耗时
-//   doB();
-//   Timer.mark("afterB");   // 记录自 afterA 到这里的耗时
-//   doC();                  // 作用域结束时记录总耗时
-//
+/**
+ * @file Benchmark.hpp
+ *
+ * @brief 极简的 C++14 单头文件 benchmark / 性能分析工具。
+ *
+ * @notice 整个库只由这一个头文件组成，仅依赖 C++ 标准库。提供两种互补的模式：
+ *   - 迭代基准：注册一个 void() 函数，测量运行 N 次的耗时，序列化为 JSON。
+ *   - 按帧分析：记录某段代码的耗时与每帧调用次数，写入 JSON。
+ *   提供单线程 BenchmarkManager 与线程安全 ThreadSafeBenchmarkManager 两个独立单例；
+ *   支持时间单位切换(默认 ms)、单次测量输出槽、计时内打桩(mark)。
+ *   所有 JSON 输出统一由 JsonWriter 模块生成；同时支持导出 Chrome Trace 事件格式，便于
+ *   在 chrome://tracing 或 Perfetto 中可视化。
+ *
+ * @code
+ *   #include "Benchmark.hpp"
+ *
+ *   static void benchmarkSqrt() { ... }
+ *   BENCHMARK(benchmarkSqrt);
+ *
+ *   int main()
+ *   {
+ *       Bm::BenchmarkOptions Options;
+ *       Options.TimeUnit = Bm::ETimeUnit::Millisecond; // 默认
+ *       return Bm::runAll("result.json", Options);
+ *   }
+ * @endcode
+ */
 
 #ifndef BM_BENCHMARK_HPP
 #define BM_BENCHMARK_HPP
@@ -106,8 +56,10 @@ namespace Bm
 
 using Clock = std::chrono::high_resolution_clock;
 
-// Time unit used when serializing durations to JSON. Durations are always
-// accumulated internally in nanoseconds and converted only at output time.
+/**
+ * @brief 序列化到 JSON 时使用的时长单位。
+ * @notice 时长始终在内部以纳秒累计，仅在输出时换算。
+ */
 enum class ETimeUnit
 {
     Hour,
@@ -117,39 +69,37 @@ enum class ETimeUnit
     Nanosecond,
 };
 
-// ---------------------------------------------------------------------------
-// Iteration-benchmark mode
-// ---------------------------------------------------------------------------
+/** @brief 迭代基准模式 */
 
-// Tunables shared by every benchmark run.
+/**
+ * @brief 迭代基准的配置项。
+ */
 struct BenchmarkOptions
 {
-    // Number of iterations to run; 0 (default) auto-calibrates so the total
-    // measured time approaches TargetTotalNanoseconds.
+    // @brief 迭代次数；0 表示自动校准，使总耗时接近 TargetTotalNanoseconds。
     std::int64_t Iterations = 0;
 
-    // Bounds applied when auto-calibrating.
+    // @brief 自动校准时使用的下界。
     std::int64_t MinIterations = 1;
+    // @brief 自动校准时使用的上界。
     std::int64_t MaxIterations = 1000000000LL;
 
-    // Warm-up invocations performed before measuring.
+    // @brief 测量前执行的预热次数。
     std::int64_t WarmupIterations = 1;
 
-    // Target total measured time (nanoseconds) used by auto-calibration.
-    std::int64_t TargetTotalNanoseconds = 10000000LL; // 10 ms
+    // @brief 自动校准的目标总耗时(纳秒)。
+    std::int64_t TargetTotalNanoseconds = 10000000LL; // @notice 10 ms
 
-    // When true, every iteration is timed separately so min/max/median/stddev
-    // are reported as well (this adds per-iteration clock overhead).
+    // @brief 为 true 时逐次计时，输出 min/max/median/stddev(会引入单次计时开销)。
     bool ShouldMeasureIndividualTimes = false;
 
-    // Unit used when serializing time values to JSON.
+    // @brief 序列化到 JSON 时使用的时长单位。
     ETimeUnit TimeUnit = ETimeUnit::Millisecond;
-
-    // When true, "//" comments explaining each field are emitted into the JSON.
-    bool ShouldEmitJsonComments = true;
 };
 
-// A single benchmark's measurement.
+/**
+ * @brief 单个基准的测量结果。
+ */
 struct BenchmarkResult
 {
     std::string Name;
@@ -158,7 +108,7 @@ struct BenchmarkResult
     double MeanTimeNanoseconds = 0.0;
     double ThroughputOpsPerSecond = 0.0;
 
-    // Populated only when ShouldMeasureIndividualTimes was enabled.
+    // @brief 仅在 ShouldMeasureIndividualTimes 开启时被填充。
     bool HasDistribution = false;
     double MinTimeNanoseconds = 0.0;
     double MaxTimeNanoseconds = 0.0;
@@ -166,7 +116,7 @@ struct BenchmarkResult
     double StddevTimeNanoseconds = 0.0;
 };
 
-// Forward declaration used by Detail::BenchmarkRegistrar.
+// @brief 供 Detail::BenchmarkRegistrar 使用的前置声明。
 void registerBenchmark(std::string Name, std::function<void()> Function);
 
 namespace Detail
@@ -178,25 +128,52 @@ struct BenchmarkEntry
     std::function<void()> Function;
 };
 
-// Function-local static: safely initialized on first use regardless of the
-// order in which translation units run their static initializers.
+/**
+ * @brief 返回基准注册表。
+ * @return 注册表引用。
+ * @notice 函数内 static，首次使用时安全初始化，与各翻译单元的静态初始化顺序无关。
+ */
 inline std::vector<BenchmarkEntry>& getRegistry()
 {
     static std::vector<BenchmarkEntry> Registry;
     return Registry;
 }
 
+/**
+ * @brief 返回当前时间点。
+ * @return 当前 Clock::time_point。
+ */
 inline Clock::time_point getTimePoint()
 {
     return Clock::now();
 }
 
+/**
+ * @brief 返回某时间点自 epoch 起的纳秒数。
+ * @param Time 时间点。
+ * @return epoch 纳秒数。
+ */
+inline std::int64_t getEpochNanoseconds(Clock::time_point Time)
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(Time.time_since_epoch()).count();
+}
+
+/**
+ * @brief 计算两个时间点之间的纳秒数。
+ * @param Start 起始时间点。
+ * @param End 结束时间点。
+ * @return 两者之间的纳秒数。
+ */
 inline std::int64_t getNanosecondsBetween(Clock::time_point Start, Clock::time_point End)
 {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(End - Start).count();
 }
 
-// Fixed-point formatting with trailing zeros removed, for compact JSON.
+/**
+ * @brief 以固定精度格式化浮点数并去除末尾多余的 0。
+ * @param Value 待格式化的值。
+ * @return 格式化后的字符串。
+ */
 inline std::string formatDouble(double Value)
 {
     if (Value == 0.0)
@@ -223,7 +200,11 @@ inline std::string formatDouble(double Value)
     return Text;
 }
 
-// Minimal JSON string escaping.
+/**
+ * @brief 最小化的 JSON 字符串转义。
+ * @param Value 待转义的字符串。
+ * @return 转义后的字符串。
+ */
 inline std::string escapeJson(const std::string& Value)
 {
     std::string Result;
@@ -258,8 +239,184 @@ inline std::string escapeJson(const std::string& Value)
     return Result;
 }
 
-// ---- Time-unit helpers ----------------------------------------------------
+/**
+ * @brief 极简的 JSON 写出器，支持缩进。
+ * @notice 采用“尾随逗号 + 关闭容器时去除”策略，稳定生成合法 JSON；所有输出模块共享它。
+ */
+class JsonWriter
+{
+public:
+    /**
+     * @brief 构造。
+     * @param Pretty 是否缩进美化。
+     * @param IndentSize 每层缩进空格数。
+     */
+    explicit JsonWriter(bool Pretty = true, int IndentSize = 2)
+        : Pretty(Pretty)
+        , IndentSize(IndentSize)
+    {
+    }
 
+    void beginObject()
+    {
+        writeValueStart();
+        Out += '{';
+        Stack.push_back(Frame());
+    }
+
+    void endObject()
+    {
+        endContainer('}');
+    }
+
+    void beginArray()
+    {
+        writeValueStart();
+        Out += '[';
+        Stack.push_back(Frame());
+    }
+
+    void endArray()
+    {
+        endContainer(']');
+    }
+
+    void writeKey(const std::string& Key)
+    {
+        writeNewlineAndIndent();
+        Out += '"' + escapeJson(Key) + "\": ";
+        AfterKey = true;
+    }
+
+    void writeString(const std::string& Value)
+    {
+        writeValueStart();
+        Out += '"' + escapeJson(Value) + '"';
+        writeValueEnd();
+    }
+
+    void writeInt(std::int64_t Value)
+    {
+        writeValueStart();
+        Out += std::to_string(Value);
+        writeValueEnd();
+    }
+
+    void writeDouble(double Value)
+    {
+        writeValueStart();
+        Out += formatDouble(Value);
+        writeValueEnd();
+    }
+
+    void writeBool(bool Value)
+    {
+        writeValueStart();
+        Out += Value ? "true" : "false";
+        writeValueEnd();
+    }
+
+    void writeNull()
+    {
+        writeValueStart();
+        Out += "null";
+        writeValueEnd();
+    }
+
+    void writeRaw(const std::string& Raw)
+    {
+        writeValueStart();
+        Out += Raw;
+        writeValueEnd();
+    }
+
+    std::string toString() const
+    {
+        return Out;
+    }
+
+private:
+    struct Frame
+    {
+        bool HasElement = false;
+        std::size_t CommaPos = 0;
+    };
+
+    /**
+     * @brief 值写入前的准备：处理缩进并标记当前容器已有元素。
+     */
+    void writeValueStart()
+    {
+        if (!AfterKey)
+        {
+            writeNewlineAndIndent();
+        }
+        AfterKey = false;
+
+        if (!Stack.empty())
+        {
+            Stack.back().HasElement = true;
+        }
+    }
+
+    /**
+     * @brief 值写入后追加尾随逗号并记录其位置。
+     */
+    void writeValueEnd()
+    {
+        if (!Stack.empty())
+        {
+            Out += ',';
+            Stack.back().CommaPos = Out.size() - 1;
+        }
+    }
+
+    /**
+     * @brief 结束容器：去除最后一个尾随逗号后写入闭合符。
+     * @param Closing 闭合字符('}' 或 ']')。
+     */
+    void endContainer(char Closing)
+    {
+        if (!Stack.empty() && Stack.back().HasElement)
+        {
+            Out.erase(Stack.back().CommaPos, 1);
+        }
+        Stack.pop_back();
+        writeNewlineAndIndent();
+        Out += Closing;
+
+        if (!Stack.empty())
+        {
+            writeValueEnd();
+        }
+    }
+
+    /**
+     * @brief 写出换行与缩进。
+     */
+    void writeNewlineAndIndent()
+    {
+        if (Pretty && !Out.empty())
+        {
+            Out += '\n';
+            Out.append(static_cast<std::size_t>(Stack.size() * IndentSize), ' ');
+        }
+    }
+
+    std::string Out;
+    std::vector<Frame> Stack;
+    bool Pretty;
+    int IndentSize;
+    bool AfterKey = false;
+};
+
+/** @brief 时间单位换算辅助 */
+
+/**
+ * @brief 返回时间单位的名称。
+ * @param Unit 时间单位。
+ * @return 单位名称字符串。
+ */
 inline const char* getTimeUnitName(ETimeUnit Unit)
 {
     switch (Unit)
@@ -273,7 +430,11 @@ inline const char* getTimeUnitName(ETimeUnit Unit)
     return "ms";
 }
 
-// Number of nanoseconds in one unit.
+/**
+ * @brief 返回一个单位包含的纳秒数。
+ * @param Unit 时间单位。
+ * @return 该单位包含的纳秒数。
+ */
 inline double getNanosecondsPerUnit(ETimeUnit Unit)
 {
     switch (Unit)
@@ -287,27 +448,53 @@ inline double getNanosecondsPerUnit(ETimeUnit Unit)
     return 1.0e6;
 }
 
+/**
+ * @brief 将纳秒换算为目标单位。
+ * @param Nanoseconds 纳秒值。
+ * @param Unit 目标单位。
+ * @return 换算后的值。
+ */
 inline double convertNanoseconds(std::int64_t Nanoseconds, ETimeUnit Unit)
 {
     return static_cast<double>(Nanoseconds) / getNanosecondsPerUnit(Unit);
 }
 
+/**
+ * @brief 将纳秒换算为目标单位。
+ * @param Nanoseconds 纳秒值。
+ * @param Unit 目标单位。
+ * @return 换算后的值。
+ */
 inline double convertNanoseconds(double Nanoseconds, ETimeUnit Unit)
 {
     return Nanoseconds / getNanosecondsPerUnit(Unit);
 }
 
+/**
+ * @brief 将纳秒按目标单位格式化。
+ * @param Nanoseconds 纳秒值。
+ * @param Unit 目标单位。
+ * @return 格式化后的字符串。
+ */
 inline std::string formatNanoseconds(std::int64_t Nanoseconds, ETimeUnit Unit)
 {
     return formatDouble(convertNanoseconds(Nanoseconds, Unit));
 }
 
+/**
+ * @brief 将纳秒按目标单位格式化。
+ * @param Nanoseconds 纳秒值。
+ * @param Unit 目标单位。
+ * @return 格式化后的字符串。
+ */
 inline std::string formatNanoseconds(double Nanoseconds, ETimeUnit Unit)
 {
     return formatDouble(convertNanoseconds(Nanoseconds, Unit));
 }
 
-// Constructed by the BENCHMARK / BENCHMARK_NAME macros at static-init time.
+/**
+ * @brief 由 BENCHMARK / BENCHMARK_NAME 宏在静态初始化时构造，完成注册。
+ */
 struct BenchmarkRegistrar
 {
     BenchmarkRegistrar(std::string Name, std::function<void()> Function)
@@ -318,8 +505,12 @@ struct BenchmarkRegistrar
 
 } // namespace Detail
 
-// Registers a benchmark under a unique name. Duplicate names are ignored, so a
-// benchmark header included in several translation units registers only once.
+/**
+ * @brief 以唯一名称注册基准。
+ * @param Name 基准名。
+ * @param Function 待测量的 void() 函数。
+ * @notice 同名注册会被忽略，因此被多个翻译单元包含的基准头只会注册一次。
+ */
 inline void registerBenchmark(std::string Name, std::function<void()> Function)
 {
     std::vector<Detail::BenchmarkEntry>& Registry = Detail::getRegistry();
@@ -335,18 +526,24 @@ inline void registerBenchmark(std::string Name, std::function<void()> Function)
     Registry.push_back(Detail::BenchmarkEntry{std::move(Name), std::move(Function)});
 }
 
+/**
+ * @brief 运行单个已注册的基准。
+ * @param Entry 基准条目。
+ * @param Options 配置项。
+ * @return 该基准的测量结果。
+ */
 inline BenchmarkResult runOne(const Detail::BenchmarkEntry& Entry, const BenchmarkOptions& Options)
 {
     BenchmarkResult Result;
     Result.Name = Entry.Name;
 
-    // Warm up (typically warms caches / branch predictors).
+    // @brief 预热(通常用于预热缓存 / 分支预测)。
     for (std::int64_t Index = 0; Index < Options.WarmupIterations; ++Index)
     {
         Entry.Function();
     }
 
-    // Resolve the iteration count, auto-calibrating when requested.
+    // @brief 确定迭代次数，需要时进行自动校准。
     std::int64_t Iterations = Options.Iterations;
     if (Iterations <= 0)
     {
@@ -440,7 +637,12 @@ inline BenchmarkResult runOne(const Detail::BenchmarkEntry& Entry, const Benchma
     return Result;
 }
 
-// Runs a single registered benchmark by name.
+/**
+ * @brief 按名字运行单个已注册的基准。
+ * @param Name 基准名。
+ * @param Options 配置项。
+ * @return 该基准的测量结果。
+ */
 inline BenchmarkResult runOne(const std::string& Name, const BenchmarkOptions& Options = BenchmarkOptions())
 {
     const Detail::BenchmarkEntry* Found = nullptr;
@@ -461,7 +663,11 @@ inline BenchmarkResult runOne(const std::string& Name, const BenchmarkOptions& O
     return runOne(*Found, Options);
 }
 
-// Runs every registered benchmark, returning the results in registration order.
+/**
+ * @brief 运行所有已注册的基准。
+ * @param Options 配置项。
+ * @return 按注册顺序排列的测量结果。
+ */
 inline std::vector<BenchmarkResult> runAll(const BenchmarkOptions& Options = BenchmarkOptions())
 {
     std::vector<BenchmarkResult> Results;
@@ -472,88 +678,73 @@ inline std::vector<BenchmarkResult> runAll(const BenchmarkOptions& Options = Ben
     return Results;
 }
 
-// Serializes iteration-benchmark results to a JSON string (with field comments
-// when Options.ShouldEmitJsonComments is true).
+/**
+ * @brief 将迭代基准结果序列化为 JSON 字符串。
+ * @param Results 测量结果列表。
+ * @param Options 配置项。
+ * @return JSON 字符串。
+ */
 inline std::string serializeJson(const std::vector<BenchmarkResult>& Results,
                                  const BenchmarkOptions& Options)
 {
-    const bool WithComments = Options.ShouldEmitJsonComments;
-    const std::string UnitName = Detail::getTimeUnitName(Options.TimeUnit);
+    Detail::JsonWriter Writer(true, 2);
+    Writer.beginObject();
 
-    std::string Text;
-    Text += "{\n";
-    Text += "  \"time_unit\": \"" + UnitName + "\",";
-    if (WithComments) Text += "  // time unit: hour / min / second / ms / ns";
-    Text += "\n";
-    Text += "  \"benchmarks\": [";
-    if (WithComments) Text += "  // all benchmark results";
-    Text += "\n";
+    Writer.writeKey("time_unit");
+    Writer.writeString(Detail::getTimeUnitName(Options.TimeUnit));
 
-    if (Results.empty())
+    Writer.writeKey("benchmarks");
+    Writer.beginArray();
+
+    for (const BenchmarkResult& Result : Results)
     {
-        Text += "  ]\n";
-    }
-    else
-    {
-        for (std::size_t Index = 0; Index < Results.size(); ++Index)
+        Writer.beginObject();
+
+        Writer.writeKey("name");
+        Writer.writeString(Result.Name);
+
+        Writer.writeKey("iterations");
+        Writer.writeInt(Result.Iterations);
+
+        Writer.writeKey("total_time");
+        Writer.writeDouble(Detail::convertNanoseconds(Result.TotalTimeNanoseconds, Options.TimeUnit));
+
+        Writer.writeKey("mean_time");
+        Writer.writeDouble(Detail::convertNanoseconds(Result.MeanTimeNanoseconds, Options.TimeUnit));
+
+        if (Result.HasDistribution)
         {
-            const BenchmarkResult& Result = Results[Index];
+            Writer.writeKey("min_time");
+            Writer.writeDouble(Detail::convertNanoseconds(Result.MinTimeNanoseconds, Options.TimeUnit));
 
-            Text += "    {\n";
-            Text += "      \"name\": \"" + Detail::escapeJson(Result.Name) + "\",";
-            if (WithComments) Text += "  // benchmark name";
-            Text += "\n";
+            Writer.writeKey("max_time");
+            Writer.writeDouble(Detail::convertNanoseconds(Result.MaxTimeNanoseconds, Options.TimeUnit));
 
-            Text += "      \"iterations\": " + std::to_string(Result.Iterations) + ",";
-            if (WithComments) Text += "  // iteration count";
-            Text += "\n";
+            Writer.writeKey("median_time");
+            Writer.writeDouble(Detail::convertNanoseconds(Result.MedianTimeNanoseconds, Options.TimeUnit));
 
-            Text += "      \"total_time\": " + Detail::formatNanoseconds(Result.TotalTimeNanoseconds, Options.TimeUnit) + ",";
-            if (WithComments) Text += "  // total time (unit in time_unit)";
-            Text += "\n";
-
-            Text += "      \"mean_time\": " + Detail::formatNanoseconds(Result.MeanTimeNanoseconds, Options.TimeUnit) + ",";
-            if (WithComments) Text += "  // mean time per call";
-            Text += "\n";
-
-            if (Result.HasDistribution)
-            {
-                Text += "      \"min_time\": " + Detail::formatNanoseconds(Result.MinTimeNanoseconds, Options.TimeUnit) + ",";
-                if (WithComments) Text += "  // min time per call";
-                Text += "\n";
-
-                Text += "      \"max_time\": " + Detail::formatNanoseconds(Result.MaxTimeNanoseconds, Options.TimeUnit) + ",";
-                if (WithComments) Text += "  // max time per call";
-                Text += "\n";
-
-                Text += "      \"median_time\": " + Detail::formatNanoseconds(Result.MedianTimeNanoseconds, Options.TimeUnit) + ",";
-                if (WithComments) Text += "  // median time per call";
-                Text += "\n";
-
-                Text += "      \"stddev_time\": " + Detail::formatNanoseconds(Result.StddevTimeNanoseconds, Options.TimeUnit) + ",";
-                if (WithComments) Text += "  // stddev time per call";
-                Text += "\n";
-            }
-
-            Text += "      \"throughput_ops_per_second\": " + Detail::formatDouble(Result.ThroughputOpsPerSecond);
-            if (WithComments) Text += "  // throughput (calls per second)";
-            Text += "\n";
-
-            Text += "    }";
-            if (Index + 1 < Results.size())
-            {
-                Text += ",";
-            }
-            Text += "\n";
+            Writer.writeKey("stddev_time");
+            Writer.writeDouble(Detail::convertNanoseconds(Result.StddevTimeNanoseconds, Options.TimeUnit));
         }
-        Text += "  ]\n";
+
+        Writer.writeKey("throughput_ops_per_second");
+        Writer.writeDouble(Result.ThroughputOpsPerSecond);
+
+        Writer.endObject();
     }
 
-    Text += "}\n";
-    return Text;
+    Writer.endArray();
+    Writer.endObject();
+    return Writer.toString();
 }
 
-// Writes iteration-benchmark results as JSON to the given path (overwrites).
+/**
+ * @brief 将迭代基准结果以 JSON 写入文件。
+ * @param Path 输出路径。
+ * @param Results 测量结果列表。
+ * @param Options 配置项。
+ * @notice 会覆盖已有文件。
+ */
 inline void writeJson(const std::string& Path, const std::vector<BenchmarkResult>& Results,
                       const BenchmarkOptions& Options = BenchmarkOptions())
 {
@@ -571,8 +762,12 @@ inline void writeJson(const std::string& Path, const std::vector<BenchmarkResult
     }
 }
 
-// Convenience: runs all benchmarks and writes the JSON to JsonPath.
-// Returns 0 on success, 1 on failure.
+/**
+ * @brief 运行所有基准并将 JSON 写入文件。
+ * @param JsonPath 输出路径。
+ * @param Options 配置项。
+ * @return 成功返回 0，失败返回 1。
+ */
 inline int runAll(const std::string& JsonPath, const BenchmarkOptions& Options = BenchmarkOptions())
 {
     try
@@ -587,16 +782,16 @@ inline int runAll(const std::string& JsonPath, const BenchmarkOptions& Options =
     }
 }
 
-// ---------------------------------------------------------------------------
-// Frame-aware profiling mode
-// ---------------------------------------------------------------------------
+/** @brief 按帧分析模式 */
 
-// Aggregated statistics for one named code section, exposed to callers.
+/**
+ * @brief 单个命名代码段的聚合统计。
+ */
 struct SectionStats
 {
     std::string Name;
 
-    // Across every recorded call.
+    // @brief 跨所有记录的调用统计。
     std::int64_t CallCount = 0;
     std::int64_t TotalTimeNanoseconds = 0;
     std::int64_t MinTimeNanoseconds = 0;
@@ -604,7 +799,7 @@ struct SectionStats
     double MeanTimeNanoseconds = 0.0;
     double StddevTimeNanoseconds = 0.0;
 
-    // Across the frames in which the section appeared.
+    // @brief 跨该段出现过的帧的统计。
     std::int64_t AppearedFrameCount = 0;
     std::int64_t FrameCallCountMin = 0;
     std::int64_t FrameCallCountMax = 0;
@@ -614,39 +809,49 @@ struct SectionStats
     double FrameTimeNanosecondsMean = 0.0;
 };
 
-// Where a completed measurement's JSON is emitted immediately.
+/**
+ * @brief 单次测量完成后的 JSON 立即输出目标。
+ */
 enum class EMeasurementSink
 {
-    None,      // no immediate output (measurements are only accumulated)
-    StdOut,    // write each measurement JSON to stdout
-    StdErr,    // write each measurement JSON to stderr
-    File,      // append each measurement JSON to the configured file
-    Callback,  // forward each measurement JSON to the configured callback
+    None,      // @brief 不立即输出(仅累积)。
+    StdOut,    // @brief 写入 stdout。
+    StdErr,    // @brief 写入 stderr。
+    File,      // @brief 追加写入配置的文件。
+    Callback,  // @brief 转发给配置的回调。
 };
 
-// A single checkpoint ("stub") recorded inside a timed scope. ElapsedNanoseconds
-// is the time since the previous checkpoint (or since the timer started).
+/**
+ * @brief 计时作用域内记录的一个打桩点。
+ * @notice ElapsedNanoseconds 表示相对上一个打桩点(或计时起点)的耗时。
+ */
 struct CheckpointRecord
 {
     std::string Name;
-    std::int64_t ElapsedNanoseconds = 0;
+    std::int64_t StartNanoseconds = 0;   // @brief 该段开始的 epoch 纳秒时间。
+    std::int64_t ElapsedNanoseconds = 0; // @brief 该段耗时。
 };
 
-// A single completed measurement, serialized to JSON and emitted immediately.
+/**
+ * @brief 一次完成的测量。
+ */
 struct MeasurementRecord
 {
     std::string Name;
-    std::int64_t ElapsedNanoseconds = 0;
-    std::int64_t Sequence = 0;        // global order across all measurements
-    std::int64_t FrameIndex = 0;      // 1-based current frame; 0 when no frame is open
-    std::int64_t FrameCallIndex = 0;  // 1-based call index within the frame; 0 when no frame
-    std::vector<CheckpointRecord> Checkpoints; // checkpoints recorded inside the timed scope
+    std::int64_t StartNanoseconds = 0;   // @brief 测量开始的 epoch 纳秒时间。
+    std::int64_t ElapsedNanoseconds = 0; // @brief 本次总耗时。
+    std::int64_t Sequence = 0;           // @brief 所有测量中的全局序号。
+    std::int64_t FrameIndex = 0;         // @brief 1 起算的当前帧；未开帧为 0。
+    std::int64_t FrameCallIndex = 0;     // @brief 帧内第几次调用(1 起)；未开帧为 0。
+    std::vector<CheckpointRecord> Checkpoints; // @brief 计时作用域内记录的打桩点。
 };
 
 namespace Detail
 {
 
-// Internal per-section accumulator kept by the manager.
+/**
+ * @brief manager 内部的按段累加器。
+ */
 struct SectionAccumulator
 {
     std::string Name;
@@ -657,11 +862,11 @@ struct SectionAccumulator
     std::int64_t MaxTimeNanoseconds = 0;
     double SumOfSquaresNanoseconds = 0.0;
 
-    // Current (open) frame counters.
+    // @brief 当前(未结束)帧的计数。
     std::int64_t FrameCallCount = 0;
     std::int64_t FrameTimeNanoseconds = 0;
 
-    // Aggregation over frames the section appeared in.
+    // @brief 跨该段出现过的帧的聚合。
     std::int64_t AppearedFrameCount = 0;
     std::int64_t FrameCallCountSum = 0;
     std::int64_t FrameCallCountMin = std::numeric_limits<std::int64_t>::max();
@@ -671,44 +876,62 @@ struct SectionAccumulator
     std::int64_t FrameTimeMax = 0;
 };
 
-// Lock policy used by the single-threaded manager: a no-op that the optimizer
-// removes entirely, so the single-threaded version pays no synchronization cost.
+/**
+ * @brief 单线程 manager 使用的空锁策略。
+ * @notice 空实现会被优化器完全消除，因此单线程版本零同步开销。
+ */
 struct NoOpLock
 {
     void lock() {}
     void unlock() {}
 };
 
-// Serializes a single measurement to a compact single-line JSON object.
+/**
+ * @brief 将单次测量序列化为单行 JSON 对象。
+ * @param Record 测量记录。
+ * @param Unit 时间单位。
+ * @return JSON 字符串。
+ */
 inline std::string serializeMeasurement(const MeasurementRecord& Record, ETimeUnit Unit)
 {
-    const std::string UnitName = getTimeUnitName(Unit);
+    JsonWriter Writer(false);
 
-    std::string Text;
-    Text += "{\"name\":\"" + escapeJson(Record.Name) + "\"";
-    Text += ",\"elapsed\":" + formatNanoseconds(Record.ElapsedNanoseconds, Unit);
-    Text += ",\"unit\":\"" + UnitName + "\"";
-    Text += ",\"sequence\":" + std::to_string(Record.Sequence);
-    Text += ",\"frame_index\":" + std::to_string(Record.FrameIndex);
-    Text += ",\"frame_call_index\":" + std::to_string(Record.FrameCallIndex);
+    Writer.beginObject();
+    Writer.writeKey("name");
+    Writer.writeString(Record.Name);
+    Writer.writeKey("elapsed");
+    Writer.writeDouble(convertNanoseconds(Record.ElapsedNanoseconds, Unit));
+    Writer.writeKey("unit");
+    Writer.writeString(getTimeUnitName(Unit));
+    Writer.writeKey("start_ns");
+    Writer.writeInt(Record.StartNanoseconds);
+    Writer.writeKey("sequence");
+    Writer.writeInt(Record.Sequence);
+    Writer.writeKey("frame_index");
+    Writer.writeInt(Record.FrameIndex);
+    Writer.writeKey("frame_call_index");
+    Writer.writeInt(Record.FrameCallIndex);
+
     if (!Record.Checkpoints.empty())
     {
-        Text += ",\"checkpoints\":[";
-        for (std::size_t Index = 0; Index < Record.Checkpoints.size(); ++Index)
+        Writer.writeKey("checkpoints");
+        Writer.beginArray();
+        for (const CheckpointRecord& Checkpoint : Record.Checkpoints)
         {
-            const CheckpointRecord& Checkpoint = Record.Checkpoints[Index];
-            Text += "{\"name\":\"" + escapeJson(Checkpoint.Name) + "\"";
-            Text += ",\"elapsed\":" + formatNanoseconds(Checkpoint.ElapsedNanoseconds, Unit);
-            Text += "}";
-            if (Index + 1 < Record.Checkpoints.size())
-            {
-                Text += ",";
-            }
+            Writer.beginObject();
+            Writer.writeKey("name");
+            Writer.writeString(Checkpoint.Name);
+            Writer.writeKey("start_ns");
+            Writer.writeInt(Checkpoint.StartNanoseconds);
+            Writer.writeKey("elapsed");
+            Writer.writeDouble(convertNanoseconds(Checkpoint.ElapsedNanoseconds, Unit));
+            Writer.endObject();
         }
-        Text += "]";
+        Writer.endArray();
     }
-    Text += "}";
-    return Text;
+
+    Writer.endObject();
+    return Writer.toString();
 }
 
 } // namespace Detail
@@ -719,33 +942,48 @@ class BenchmarkTimerBase;
 namespace Detail
 {
 
-// Shared implementation behind both managers. LockT selects the synchronization
-// policy: Detail::NoOpLock for the single-threaded version, std::mutex for the
-// thread-safe version. Both are separate types with separate singletons.
+/**
+ * @brief 两个 manager 共享的实现。
+ * @param LockT 同步策略：单线程用 NoOpLock，线程安全用 std::mutex。
+ * @notice 两者是独立的类型、独立的单例。
+ */
 template <typename LockT>
 class BenchmarkManagerBase
 {
 public:
     using TimerType = BenchmarkTimerBase<BenchmarkManagerBase<LockT>>;
 
+    /**
+     * @brief 返回单例。
+     * @return 单例引用。
+     */
     static BenchmarkManagerBase& get()
     {
         static BenchmarkManagerBase Instance;
         return Instance;
     }
 
-    // Records one call of a named section taking Nanoseconds. Also emits the
-    // completed measurement to the configured sink (see setMeasurementSink).
+    /**
+     * @brief 记录命名段的一次调用，耗时 Nanoseconds。
+     * @param Name 段名。
+     * @param Nanoseconds 本次耗时。
+     * @notice 同时把完成的测量发往配置的 sink(见 setMeasurementSink)。
+     */
     void recordTime(const std::string& Name, std::int64_t Nanoseconds)
     {
-        recordTime(Name, Nanoseconds, std::vector<CheckpointRecord>());
+        recordTime(Name, Nanoseconds, 0, std::vector<CheckpointRecord>());
     }
 
-    // Same as above, but also attaches the checkpoints recorded inside the
-    // timed scope (each checkpoint's elapsed time is relative to the previous
-    // checkpoint or to the timer start).
+    /**
+     * @brief 记录命名段的一次调用，并附带起始时间与打桩点。
+     * @param Name 段名。
+     * @param Nanoseconds 本次耗时。
+     * @param StartNanoseconds 测量开始的 epoch 纳秒时间。
+     * @param Checkpoints 打桩点列表。
+     * @notice 每个打桩点的耗时相对上一个打桩点(或计时起点)。
+     */
     void recordTime(const std::string& Name, std::int64_t Nanoseconds,
-                    std::vector<CheckpointRecord> Checkpoints)
+                    std::int64_t StartNanoseconds, std::vector<CheckpointRecord> Checkpoints)
     {
         if (Nanoseconds < 0)
         {
@@ -777,16 +1015,18 @@ public:
             {
                 MeasurementRecord Record;
                 Record.Name = Name;
+                Record.StartNanoseconds = StartNanoseconds;
                 Record.ElapsedNanoseconds = Nanoseconds;
                 Record.Sequence = ++MeasurementSequence;
                 Record.FrameIndex = HasOpenFrame ? TotalFrameCount + 1 : 0;
                 Record.FrameCallIndex = Section.FrameCallCount;
                 Record.Checkpoints = std::move(Checkpoints);
+
                 Json = serializeMeasurement(Record, TimeUnit);
 
                 if (ShouldStoreMeasurements)
                 {
-                    MeasurementLog.push_back(Json);
+                    MeasurementRecords.push_back(std::move(Record));
                 }
             }
 
@@ -807,8 +1047,10 @@ public:
         }
     }
 
-    // Marks the start of a new frame. If a frame was already open it is
-    // finalized first.
+    /**
+     * @brief 标记新一帧的开始。
+     * @notice 若已有未结束的帧，会先将其结算。
+     */
     void beginFrame()
     {
         std::lock_guard<LockT> Guard(Lock);
@@ -819,7 +1061,7 @@ public:
         }
         else
         {
-            // Discard stray counters recorded before any frame opened.
+            // @brief 丢弃任何帧开始前记录的游离计数。
             for (Detail::SectionAccumulator& Section : Sections)
             {
                 Section.FrameCallCount = 0;
@@ -830,8 +1072,9 @@ public:
         HasOpenFrame = true;
     }
 
-    // Marks the end of the current frame and folds its counters into the
-    // per-frame statistics.
+    /**
+     * @brief 标记当前帧结束，并把计数并入按帧统计。
+     */
     void endFrame()
     {
         std::lock_guard<LockT> Guard(Lock);
@@ -845,105 +1088,155 @@ public:
         HasOpenFrame = false;
     }
 
-    // Returns an RAII timer that records the section on scope exit.
+    /**
+     * @brief 返回一个在作用域结束时记录的 RAII 计时器。
+     * @param Name 段名。
+     * @return RAII 计时器。
+     */
     TimerType measure(const std::string& Name);
 
-    // Aggregated statistics in first-seen order.
+    /**
+     * @brief 返回按首次出现顺序排列的聚合统计。
+     * @return SectionStats 列表。
+     */
     std::vector<SectionStats> getStats() const
     {
         std::lock_guard<LockT> Guard(Lock);
         return buildStats();
     }
 
+    /**
+     * @brief 返回已统计的总帧数。
+     * @return 总帧数。
+     */
     std::int64_t getTotalFrameCount() const
     {
         std::lock_guard<LockT> Guard(Lock);
         return TotalFrameCount;
     }
 
-    // Clears all accumulated data (statistics and the measurement log).
+    /**
+     * @brief 清空所有累计数据(统计与测量记录)。
+     */
     void reset()
     {
         std::lock_guard<LockT> Guard(Lock);
         Sections.clear();
         TotalFrameCount = 0;
         HasOpenFrame = false;
-        MeasurementLog.clear();
+        MeasurementRecords.clear();
         MeasurementSequence = 0;
     }
 
-    // Sets the unit used when serializing time values to JSON.
+    /**
+     * @brief 设置序列化到 JSON 时使用的时长单位。
+     * @param Unit 时间单位。
+     */
     void setTimeUnit(ETimeUnit Unit)
     {
         std::lock_guard<LockT> Guard(Lock);
         TimeUnit = Unit;
     }
 
+    /**
+     * @brief 返回当前时长单位。
+     * @return 时间单位。
+     */
     ETimeUnit getTimeUnit() const
     {
         std::lock_guard<LockT> Guard(Lock);
         return TimeUnit;
     }
 
-    // Controls whether "//" field comments are emitted into the JSON.
-    void setShouldEmitJsonComments(bool ShouldEmit)
-    {
-        std::lock_guard<LockT> Guard(Lock);
-        ShouldEmitJsonComments = ShouldEmit;
-    }
-
-    // Sets where each completed measurement's JSON is emitted immediately.
+    /**
+     * @brief 设置单次测量 JSON 的立即输出目标。
+     * @param SinkKind 输出目标。
+     */
     void setMeasurementSink(EMeasurementSink SinkKind)
     {
         std::lock_guard<LockT> Guard(Lock);
         MeasurementSink = SinkKind;
     }
 
-    // Sets the file used by EMeasurementSink::File (appended per measurement).
+    /**
+     * @brief 设置 EMeasurementSink::File 使用的文件。
+     * @param Path 文件路径。
+     * @notice 每次测量追加一行。
+     */
     void setMeasurementFile(const std::string& Path)
     {
         std::lock_guard<LockT> Guard(Lock);
         MeasurementFilePath = Path;
     }
 
-    // Sets the callback used by EMeasurementSink::Callback.
+    /**
+     * @brief 设置 EMeasurementSink::Callback 使用的回调。
+     * @param Callback 回调函数。
+     */
     void setMeasurementCallback(std::function<void(const std::string&)> Callback)
     {
         std::lock_guard<LockT> Guard(Lock);
         MeasurementCallback = std::move(Callback);
     }
 
-    // Controls whether completed measurements are accumulated in memory.
+    /**
+     * @brief 控制是否在内存中累积完成的测量。
+     * @param ShouldStore 是否累积。
+     */
     void setShouldStoreMeasurements(bool ShouldStore)
     {
         std::lock_guard<LockT> Guard(Lock);
         ShouldStoreMeasurements = ShouldStore;
     }
 
-    // Returns a copy of the accumulated per-measurement JSON strings.
+    /**
+     * @brief 返回已累积的测量记录副本。
+     * @return MeasurementRecord 列表。
+     */
+    std::vector<MeasurementRecord> getMeasurementRecords() const
+    {
+        std::lock_guard<LockT> Guard(Lock);
+        return MeasurementRecords;
+    }
+
+    /**
+     * @brief 返回已累积的单次测量 JSON 列表(即时序列化)。
+     * @return JSON 字符串列表。
+     */
     std::vector<std::string> getMeasurementLog() const
     {
         std::lock_guard<LockT> Guard(Lock);
-        return MeasurementLog;
+        std::vector<std::string> Result;
+        Result.reserve(MeasurementRecords.size());
+        for (const MeasurementRecord& Record : MeasurementRecords)
+        {
+            Result.push_back(serializeMeasurement(Record, TimeUnit));
+        }
+        return Result;
     }
 
-    // Clears the accumulated per-measurement JSON strings (keeps the sink config).
+    /**
+     * @brief 清空已累积的测量记录(保留 sink 配置)。
+     */
     void clearMeasurementLog()
     {
         std::lock_guard<LockT> Guard(Lock);
-        MeasurementLog.clear();
+        MeasurementRecords.clear();
     }
 
-    // Writes the accumulated per-measurement JSON strings to Path, one per
-    // line (JSON Lines). Returns 0 on success, 1 on failure.
+    /**
+     * @brief 把累积的单次测量写入文件，每行一条(JSON Lines)。
+     * @param Path 输出路径。
+     * @return 成功返回 0，失败返回 1。
+     */
     int writeMeasurementLog(const std::string& Path) const
     {
-        std::vector<std::string> Copy;
-        bool WithComments = false;
+        std::vector<MeasurementRecord> Copy;
+        ETimeUnit Unit = ETimeUnit::Millisecond;
         {
             std::lock_guard<LockT> Guard(Lock);
-            Copy = MeasurementLog;
-            WithComments = ShouldEmitJsonComments;
+            Copy = MeasurementRecords;
+            Unit = TimeUnit;
         }
 
         try
@@ -953,15 +1246,9 @@ public:
             {
                 throw std::runtime_error("cannot open output file: " + Path);
             }
-            if (WithComments)
+            for (const MeasurementRecord& Record : Copy)
             {
-                Output << "// name=section elapsed=time(in unit) unit=time unit sequence=global index"
-                       << " frame_index=frame(0=none) frame_call_index=call index in frame(0=none)"
-                       << " checkpoints=[{name,elapsed}] (elapsed=since previous checkpoint/start)\n";
-            }
-            for (const std::string& Json : Copy)
-            {
-                Output << Json << '\n';
+                Output << serializeMeasurement(Record, Unit) << '\n';
             }
             if (!Output)
             {
@@ -976,116 +1263,189 @@ public:
         }
     }
 
-    // Serializes the aggregated statistics to a JSON string (with field
-    // comments when ShouldEmitJsonComments is true).
+    /**
+     * @brief 将聚合统计序列化为 JSON 字符串。
+     * @return JSON 字符串。
+     */
     std::string serializeJson() const
     {
         std::lock_guard<LockT> Guard(Lock);
 
-        const bool WithComments = ShouldEmitJsonComments;
-        const std::string UnitName = Detail::getTimeUnitName(TimeUnit);
         const std::vector<SectionStats> Stats = buildStats();
 
-        std::string Text;
-        Text += "{\n";
-        Text += "  \"time_unit\": \"" + UnitName + "\",";
-        if (WithComments) Text += "  // time unit: hour / min / second / ms / ns";
-        Text += "\n";
-        Text += "  \"frame_count\": " + std::to_string(TotalFrameCount) + ",";
-        if (WithComments) Text += "  // total frames counted";
-        Text += "\n";
-        Text += "  \"sections\": [";
-        if (WithComments) Text += "  // per-section statistics";
-        Text += "\n";
+        JsonWriter Writer(true, 2);
+        Writer.beginObject();
 
-        if (Stats.empty())
+        Writer.writeKey("time_unit");
+        Writer.writeString(getTimeUnitName(TimeUnit));
+
+        Writer.writeKey("frame_count");
+        Writer.writeInt(TotalFrameCount);
+
+        Writer.writeKey("sections");
+        Writer.beginArray();
+
+        for (const SectionStats& Section : Stats)
         {
-            Text += "  ]\n";
-        }
-        else
-        {
-            for (std::size_t Index = 0; Index < Stats.size(); ++Index)
-            {
-                const SectionStats& Section = Stats[Index];
+            Writer.beginObject();
 
-                Text += "    {\n";
-                Text += "      \"name\": \"" + Detail::escapeJson(Section.Name) + "\",";
-                if (WithComments) Text += "  // section name";
-                Text += "\n";
+            Writer.writeKey("name");
+            Writer.writeString(Section.Name);
 
-                Text += "      \"call_count\": " + std::to_string(Section.CallCount) + ",";
-                if (WithComments) Text += "  // total call count";
-                Text += "\n";
+            Writer.writeKey("call_count");
+            Writer.writeInt(Section.CallCount);
 
-                Text += "      \"total_time\": " + Detail::formatNanoseconds(Section.TotalTimeNanoseconds, TimeUnit) + ",";
-                if (WithComments) Text += "  // total time (unit in time_unit)";
-                Text += "\n";
+            Writer.writeKey("total_time");
+            Writer.writeDouble(convertNanoseconds(Section.TotalTimeNanoseconds, TimeUnit));
 
-                Text += "      \"min_time\": " + Detail::formatNanoseconds(Section.MinTimeNanoseconds, TimeUnit) + ",";
-                if (WithComments) Text += "  // min time per call";
-                Text += "\n";
+            Writer.writeKey("min_time");
+            Writer.writeDouble(convertNanoseconds(Section.MinTimeNanoseconds, TimeUnit));
 
-                Text += "      \"max_time\": " + Detail::formatNanoseconds(Section.MaxTimeNanoseconds, TimeUnit) + ",";
-                if (WithComments) Text += "  // max time per call";
-                Text += "\n";
+            Writer.writeKey("max_time");
+            Writer.writeDouble(convertNanoseconds(Section.MaxTimeNanoseconds, TimeUnit));
 
-                Text += "      \"mean_time\": " + Detail::formatNanoseconds(Section.MeanTimeNanoseconds, TimeUnit) + ",";
-                if (WithComments) Text += "  // mean time per call";
-                Text += "\n";
+            Writer.writeKey("mean_time");
+            Writer.writeDouble(convertNanoseconds(Section.MeanTimeNanoseconds, TimeUnit));
 
-                Text += "      \"stddev_time\": " + Detail::formatNanoseconds(Section.StddevTimeNanoseconds, TimeUnit) + ",";
-                if (WithComments) Text += "  // stddev time per call";
-                Text += "\n";
+            Writer.writeKey("stddev_time");
+            Writer.writeDouble(convertNanoseconds(Section.StddevTimeNanoseconds, TimeUnit));
 
-                Text += "      \"frame_count\": " + std::to_string(Section.AppearedFrameCount) + ",";
-                if (WithComments) Text += "  // frames this section appeared in";
-                Text += "\n";
+            Writer.writeKey("frame_count");
+            Writer.writeInt(Section.AppearedFrameCount);
 
-                Text += "      \"frame_call_count_min\": " + std::to_string(Section.FrameCallCountMin) + ",";
-                if (WithComments) Text += "  // min calls per frame";
-                Text += "\n";
+            Writer.writeKey("frame_call_count_min");
+            Writer.writeInt(Section.FrameCallCountMin);
 
-                Text += "      \"frame_call_count_max\": " + std::to_string(Section.FrameCallCountMax) + ",";
-                if (WithComments) Text += "  // max calls per frame";
-                Text += "\n";
+            Writer.writeKey("frame_call_count_max");
+            Writer.writeInt(Section.FrameCallCountMax);
 
-                Text += "      \"frame_call_count_mean\": " + Detail::formatDouble(Section.FrameCallCountMean) + ",";
-                if (WithComments) Text += "  // mean calls per frame";
-                Text += "\n";
+            Writer.writeKey("frame_call_count_mean");
+            Writer.writeDouble(Section.FrameCallCountMean);
 
-                Text += "      \"frame_time_min\": " + Detail::formatNanoseconds(Section.FrameTimeNanosecondsMin, TimeUnit) + ",";
-                if (WithComments) Text += "  // min time per frame";
-                Text += "\n";
+            Writer.writeKey("frame_time_min");
+            Writer.writeDouble(convertNanoseconds(Section.FrameTimeNanosecondsMin, TimeUnit));
 
-                Text += "      \"frame_time_max\": " + Detail::formatNanoseconds(Section.FrameTimeNanosecondsMax, TimeUnit) + ",";
-                if (WithComments) Text += "  // max time per frame";
-                Text += "\n";
+            Writer.writeKey("frame_time_max");
+            Writer.writeDouble(convertNanoseconds(Section.FrameTimeNanosecondsMax, TimeUnit));
 
-                Text += "      \"frame_time_mean\": " + Detail::formatNanoseconds(Section.FrameTimeNanosecondsMean, TimeUnit);
-                if (WithComments) Text += "  // mean time per frame";
-                Text += "\n";
+            Writer.writeKey("frame_time_mean");
+            Writer.writeDouble(convertNanoseconds(Section.FrameTimeNanosecondsMean, TimeUnit));
 
-                Text += "    }";
-                if (Index + 1 < Stats.size())
-                {
-                    Text += ",";
-                }
-                Text += "\n";
-            }
-            Text += "  ]\n";
+            Writer.endObject();
         }
 
-        Text += "}\n";
-        return Text;
+        Writer.endArray();
+        Writer.endObject();
+        return Writer.toString();
     }
 
-    // Writes the aggregated statistics as JSON to the given path (overwrites).
-    // Returns 0 on success, 1 on failure.
+    /**
+     * @brief 将聚合统计以 JSON 写入文件。
+     * @param Path 输出路径。
+     * @return 成功返回 0，失败返回 1。
+     * @notice 会覆盖已有文件。
+     */
     int writeJson(const std::string& Path) const
     {
         try
         {
             const std::string Text = serializeJson();
+
+            std::ofstream Output(Path, std::ios::binary | std::ios::trunc);
+            if (!Output)
+            {
+                throw std::runtime_error("cannot open output file: " + Path);
+            }
+            Output.write(Text.data(), static_cast<std::streamsize>(Text.size()));
+            if (!Output)
+            {
+                throw std::runtime_error("failed to write output file: " + Path);
+            }
+            return 0;
+        }
+        catch (const std::exception& Exception)
+        {
+            std::cerr << "benchmark error: " << Exception.what() << "\n";
+            return 1;
+        }
+    }
+
+    /**
+     * @brief 将累积的测量序列化为 Chrome Trace 事件格式。
+     * @return trace JSON 字符串。
+     * @notice 输出可直接在 chrome://tracing 或 Perfetto 中打开；时间单位为微秒。
+     */
+    std::string serializeTrace() const
+    {
+        std::vector<MeasurementRecord> Copy;
+        {
+            std::lock_guard<LockT> Guard(Lock);
+            Copy = MeasurementRecords;
+        }
+
+        JsonWriter Writer(false);
+
+        Writer.beginObject();
+        Writer.writeKey("traceEvents");
+        Writer.beginArray();
+
+        for (const MeasurementRecord& Record : Copy)
+        {
+            Writer.beginObject();
+            Writer.writeKey("name");
+            Writer.writeString(Record.Name);
+            Writer.writeKey("cat");
+            Writer.writeString("benchmark");
+            Writer.writeKey("ph");
+            Writer.writeString("X");
+            Writer.writeKey("ts");
+            Writer.writeDouble(static_cast<double>(Record.StartNanoseconds) / 1000.0);
+            Writer.writeKey("dur");
+            Writer.writeDouble(static_cast<double>(Record.ElapsedNanoseconds) / 1000.0);
+            Writer.writeKey("pid");
+            Writer.writeInt(0);
+            Writer.writeKey("tid");
+            Writer.writeInt(0);
+            Writer.endObject();
+
+            for (const CheckpointRecord& Checkpoint : Record.Checkpoints)
+            {
+                Writer.beginObject();
+                Writer.writeKey("name");
+                Writer.writeString(Checkpoint.Name);
+                Writer.writeKey("cat");
+                Writer.writeString("benchmark");
+                Writer.writeKey("ph");
+                Writer.writeString("X");
+                Writer.writeKey("ts");
+                Writer.writeDouble(static_cast<double>(Checkpoint.StartNanoseconds) / 1000.0);
+                Writer.writeKey("dur");
+                Writer.writeDouble(static_cast<double>(Checkpoint.ElapsedNanoseconds) / 1000.0);
+                Writer.writeKey("pid");
+                Writer.writeInt(0);
+                Writer.writeKey("tid");
+                Writer.writeInt(0);
+                Writer.endObject();
+            }
+        }
+
+        Writer.endArray();
+        Writer.writeKey("displayTimeUnit");
+        Writer.writeString("ms");
+        Writer.endObject();
+        return Writer.toString();
+    }
+
+    /**
+     * @brief 将 Chrome Trace 事件写入文件。
+     * @param Path 输出路径。
+     * @return 成功返回 0，失败返回 1。
+     */
+    int writeTrace(const std::string& Path) const
+    {
+        try
+        {
+            const std::string Text = serializeTrace();
 
             std::ofstream Output(Path, std::ios::binary | std::ios::trunc);
             if (!Output)
@@ -1112,7 +1472,12 @@ private:
     BenchmarkManagerBase(const BenchmarkManagerBase&) = delete;
     BenchmarkManagerBase& operator=(const BenchmarkManagerBase&) = delete;
 
-    // The caller must hold the lock.
+    /**
+     * @brief 查找或创建指定名称的累加器。
+     * @param Name 段名。
+     * @return 累加器引用。
+     * @notice 调用方必须已持有锁。
+     */
     Detail::SectionAccumulator& findOrCreate(const std::string& Name)
     {
         for (Detail::SectionAccumulator& Section : Sections)
@@ -1128,7 +1493,10 @@ private:
         return Sections.back();
     }
 
-    // The caller must hold the lock.
+    /**
+     * @brief 结算当前帧。
+     * @notice 调用方必须已持有锁。
+     */
     void finalizeCurrentFrame()
     {
         for (Detail::SectionAccumulator& Section : Sections)
@@ -1151,7 +1519,11 @@ private:
         ++TotalFrameCount;
     }
 
-    // The caller must hold the lock.
+    /**
+     * @brief 由内部累加器构建统计列表。
+     * @return SectionStats 列表。
+     * @notice 调用方必须已持有锁。
+     */
     std::vector<SectionStats> buildStats() const
     {
         std::vector<SectionStats> Stats;
@@ -1198,8 +1570,14 @@ private:
         return Stats;
     }
 
-    // Emits a single measurement JSON to the configured sink. Called without
-    // holding the lock so the callback may re-enter the manager safely.
+    /**
+     * @brief 把单次测量 JSON 发往配置的 sink。
+     * @param SinkKind 输出目标。
+     * @param FilePath 文件路径。
+     * @param Callback 回调。
+     * @param Json JSON 字符串。
+     * @notice 在未持有锁时调用，因此回调可安全地重入 manager。
+     */
     static void emitMeasurement(EMeasurementSink SinkKind,
                                 const std::string& FilePath,
                                 const std::function<void(const std::string&)>& Callback,
@@ -1247,25 +1625,29 @@ private:
     bool HasOpenFrame = false;
 
     ETimeUnit TimeUnit = ETimeUnit::Millisecond;
-    bool ShouldEmitJsonComments = true;
 
     EMeasurementSink MeasurementSink = EMeasurementSink::None;
     std::string MeasurementFilePath;
     std::function<void(const std::string&)> MeasurementCallback;
-    std::vector<std::string> MeasurementLog;
+    std::vector<MeasurementRecord> MeasurementRecords;
     std::int64_t MeasurementSequence = 0;
     bool ShouldStoreMeasurements = true;
 };
 
 } // namespace Detail
 
-// RAII timer that records a section's elapsed time when it leaves scope (or
-// when stop() is called). ManagerT selects which manager singleton the time is
-// recorded into.
+/**
+ * @brief RAII 计时器，在离开作用域(或调用 stop)时记录该段的耗时。
+ * @param ManagerT 决定把耗时记录到哪个 manager 单例。
+ */
 template <typename ManagerT>
 class BenchmarkTimerBase
 {
 public:
+    /**
+     * @brief 构造计时器并开始计时。
+     * @param Name 段名。
+     */
     explicit BenchmarkTimerBase(std::string Name)
         : Name(std::move(Name))
         , Start(Clock::now())
@@ -1275,13 +1657,16 @@ public:
     {
     }
 
+    /**
+     * @brief 析构时若仍处于激活状态，则记录本次耗时。
+     */
     ~BenchmarkTimerBase()
     {
         if (IsActive)
         {
             ManagerT::get().recordTime(
                 Name, Detail::getNanosecondsBetween(Start, Detail::getTimePoint()),
-                std::move(Checkpoints));
+                Detail::getEpochNanoseconds(Start), std::move(Checkpoints));
         }
     }
 
@@ -1303,7 +1688,7 @@ public:
             {
                 ManagerT::get().recordTime(
                     Name, Detail::getNanosecondsBetween(Start, Detail::getTimePoint()),
-                    std::move(Checkpoints));
+                    Detail::getEpochNanoseconds(Start), std::move(Checkpoints));
             }
 
             Name = std::move(Other.Name);
@@ -1319,8 +1704,11 @@ public:
     BenchmarkTimerBase(const BenchmarkTimerBase&) = delete;
     BenchmarkTimerBase& operator=(const BenchmarkTimerBase&) = delete;
 
-    // Records a named checkpoint ("stub") inside the timed scope. The elapsed
-    // time is relative to the previous checkpoint (or to the timer start).
+    /**
+     * @brief 在计时作用域内记录一个命名打桩点。
+     * @param CheckpointName 打桩点名。
+     * @notice 耗时相对上一个打桩点(或计时起点)。
+     */
     void mark(const std::string& CheckpointName)
     {
         if (!IsActive)
@@ -1329,19 +1717,20 @@ public:
         }
 
         const Clock::time_point Now = Clock::now();
-        Checkpoints.push_back(
-            CheckpointRecord{CheckpointName, Detail::getNanosecondsBetween(LastMark, Now)});
+        Checkpoints.push_back(CheckpointRecord{
+            CheckpointName,
+            Detail::getEpochNanoseconds(LastMark),
+            Detail::getNanosecondsBetween(LastMark, Now)});
         LastMark = Now;
     }
 
-    // Stops the timer early and records the elapsed time immediately.
     void stop()
     {
         if (IsActive)
         {
             ManagerT::get().recordTime(
                 Name, Detail::getNanosecondsBetween(Start, Detail::getTimePoint()),
-                std::move(Checkpoints));
+                Detail::getEpochNanoseconds(Start), std::move(Checkpoints));
             IsActive = false;
         }
     }
@@ -1357,6 +1746,11 @@ private:
 namespace Detail
 {
 
+/**
+ * @brief 返回一个在作用域结束时记录的 RAII 计时器。
+ * @param Name 段名。
+ * @return RAII 计时器。
+ */
 template <typename LockT>
 inline typename BenchmarkManagerBase<LockT>::TimerType
 BenchmarkManagerBase<LockT>::measure(const std::string& Name)
@@ -1366,38 +1760,36 @@ BenchmarkManagerBase<LockT>::measure(const std::string& Name)
 
 } // namespace Detail
 
-// Concrete single-threaded manager: no synchronization overhead.
+// @brief 具体单线程 manager：零同步开销。
 using BenchmarkManager = Detail::BenchmarkManagerBase<Detail::NoOpLock>;
 
-// Concrete thread-safe manager: every operation is guarded by std::mutex.
+// @brief 具体线程安全 manager：每个操作由 std::mutex 保护。
 using ThreadSafeBenchmarkManager = Detail::BenchmarkManagerBase<std::mutex>;
 
-// Matching RAII timers.
+// @brief 对应的 RAII 计时器。
 using BenchmarkTimer = BenchmarkTimerBase<BenchmarkManager>;
 using ThreadSafeBenchmarkTimer = BenchmarkTimerBase<ThreadSafeBenchmarkManager>;
 
 } // namespace Bm
 
-// Token pasting helpers.
+// @brief 宏拼接辅助。
 #define BM_CONCAT_INNER(Left, Right) Left##Right
 #define BM_CONCAT(Left, Right) BM_CONCAT_INNER(Left, Right)
 
-// Registers a benchmark function named "Function" under the string #Function.
-// Place at namespace scope, one per line.
+// @brief 注册名为 "Function" 的基准函数。
+// @notice 放在命名空间作用域，每行一个。
 #define BENCHMARK(Function) \
     static ::Bm::Detail::BenchmarkRegistrar BM_CONCAT(BmBenchmarkRegistrar_, __LINE__)(#Function, &Function)
 
-// Registers a benchmark function under an explicit name.
+// @brief 以显式名字注册基准函数。
 #define BENCHMARK_NAME(Name, Function) \
     static ::Bm::Detail::BenchmarkRegistrar BM_CONCAT(BmBenchmarkRegistrar_, __LINE__)(Name, &Function)
 
-// Measures the enclosing scope as a named section until it exits
-// (single-threaded manager).
+// @brief 测量所在作用域(单线程 manager)。
 #define BM_SCOPED_TIMER(Name) \
     ::Bm::BenchmarkTimer BM_CONCAT(BmTimer_, __LINE__)(Name)
 
-// Measures the enclosing scope as a named section until it exits
-// (thread-safe manager).
+// @brief 测量所在作用域(线程安全 manager)。
 #define BM_SCOPED_TIMER_THREAD_SAFE(Name) \
     ::Bm::ThreadSafeBenchmarkTimer BM_CONCAT(BmTimerTs_, __LINE__)(Name)
 

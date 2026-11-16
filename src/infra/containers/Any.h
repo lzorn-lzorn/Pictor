@@ -235,11 +235,174 @@ public:
         std::enable_if_t<!std::is_same_v<typename DT, Any>, int32_t> = 0,
         std::enable_if_t<std::is_copy_constructible_v<DT>, int32_t> = 0
     >
-    Any(Any && Other)
+    Any(Any && Other) noexcept
     {
+        any_detail::Ops<DT>::construct(Storage, std::forward<T>(Other));
+        VTable = &any_detail::VTableFor<DT>;
+    }
 
+    template <typename Ty, typename ...Args>
+    explicit Any(std::in_place_type_t<Ty>, Args&&... ConstructParams)
+    {
+        using DT = std::decay_t<Ty>;
+        static_assert(std::is_copy_constructible_v<DT>, "Type must be copy constructible");
+        any_detail::Ops<DT>::construct(Storage, std::forward<Args>(ConstructParams)...);
+        VTable = &any_detail::VTableFor<DT>;
+    }
+
+    template <typename T, typename U, typename ...Args>
+    explicit Any(std::in_place_type_t<T>, std::initializer_list<U> InitParamList, Args&&... ConstructParams)
+    {
+        using DT = std::decay_t<Ty>;
+        static_assert(std::is_copy_constructible_v<DT>, "Type must be copy constructible");
+        any_detail::Ops<DT>::construct(Storage, InitParamList, std::forward<Args>(ConstructParams)...);
+        VTable = &any_detail::VTableFor<DT>;
+    }
+
+    Any& operator=(const Any& Other) {
+        if (this != &Other) {
+            Any Tmp(Other);
+            swap(Tmp);
+        }
+        return *this;
+    }
+
+    Any& operator=(Any&& Other) noexcept {
+        if (this != &Other) {
+            reset();
+            if (Other.VTable) {
+                Other.VTable->move(Storage, Other.Storage);
+                VTable = Other.VTable;
+                Other.VTable = nullptr;
+            }
+        }
+        return *this;
+    }
+
+    template <class T,
+          class DT = std::decay_t<T>,
+          std::enable_if_t<!std::is_same_v<DT, Any>, int> = 0>
+    Any& operator=(T&& Value) {
+        Any Tmp(std::forward<T>(Value));
+        swap(Tmp);
+        return *this;
+    }
+    
+    template <class T, class... Args>
+    std::decay_t<T>& emplace(Args&&... ConstructParams)
+    {
+        using DT = std::decay_t<T>;
+        static_assert(std::is_copy_constructible_v<DT>);
+        reset();
+        fast_any_detail::Ops<DT>::construct(Storage, std::forward<Args>(ConstructParams)...);
+        vtable_ = &fast_any_detail::vtable_for<DT>;
+        return *fast_any_detail::Ops<DT>::ptr(Storage);
+    }
+
+    template <class T, class U, class... Args>
+    std::decay_t<T>& emplace(std::initializer_list<U> InitParamList, Args&&... ConstructParams)
+    {
+        using DT = std::decay_t<T>;
+        static_assert(std::is_copy_constructible_v<DT>);
+        reset();
+        any_detail::Ops<DT>::construct(Storage, InitParamList, std::forward<Args>(ConstructParams)...);
+        VTable = &any_detail::VTableFor<DT>;
+        return *any_detail::Ops<DT>::getPtr(Storage);
+    }
+
+    void reset() noexcept
+    {
+        if (VTable)
+        {
+            VTable->destroy(Storage);
+            VTable = nullptr;
+        }
+    }
+
+    void swap(Any& Other) noexcept
+    {
+        Storage Tmp;
+        std::memcpy(&Tmp, &Storage, sizeof(Storage));
+        std::memcpy(&Storage, &Other.Storage, sizeof(Storage));
+        std::memcpy(&Other.Storage, &Tmp, sizeof(Storage));
+        std::swap(VTable, Other.VTable);
+    }
+
+    [[nodiscard]] bool HasValue() const noexcept { return VTable != nullptr; }
+    explicit operator bool() const noexcept { return HasValue(); }
+
+    TypeId_t getTypeId() const noexcept { return VTable ? VTable->getTypeId() : nullptr; }
+
+#if HAS_RTTI
+    const std::type_info& type() const noexcept
+    {
+        return VTable ? VTable->getTypeInfo() : typeid(void);
+    }
+#endif
+
+    template <typename Ty>
+    std::decay_t<Ty>* castPtr() noexcept
+    {
+        return const_cast<std::decay_t<Ty>*>(static_cast<const Any*>(this)->castPtr<Ty>());
     }
 };
 
+inline void swap(Any& A, Any& B) noexcept
+{
+    A.swap(B);
+}
+
+template <class T>
+const std::decay_t<T>* doAnyCast(const Any* A) noexcept {
+    return A ? A->castPtr<T>() : nullptr;
+}
+
+template <class T>
+std::decay_t<T>* doAnyCast(Any* A) noexcept {
+    return A ? A->castPtr<T>() : nullptr;
+}
+
+template <class T>
+std::decay_t<T> doAnyCast(const Any& A) {
+    using DT = std::decay_t<T>;
+    auto* Ptr = A.castPtr<DT>();
+    if (!Ptr)
+    {
+        throw std::bad_cast{};
+    }
+    return *Ptr;
+}
+
+template <class T>
+std::decay_t<T> doAnyCast(Any& A) {
+    using DT = std::decay_t<T>;
+    auto* Ptr = A.castPtr<DT>();
+    if (!Ptr)
+    {
+        throw std::bad_cast{};
+    }
+    return *Ptr;
+}
+
+template <class T>
+std::decay_t<T> doAnyCast(Any&& A) {
+    using DT = std::decay_t<T>;
+    auto* Ptr = A.castPtr<DT>();
+    if (!Ptr)    
+    {
+        throw std::bad_cast{};
+    }
+    return std::move(*Ptr);
+}
+
+template <class T, class... Args>
+Any makeAny(Args&&... ConsturctParams) {
+    return Any(std::in_place_type<T>, std::forward<Args>(ConsturctParams)...);
+}
+
+template <class T, class U, class... Args>
+Any makeAny(std::initializer_list<U> InitParamList, Args&&... ConsturctParams) {
+    return Any(std::in_place_type<T>, InitParamList, std::forward<Args>(ConsturctParams)...);
+}
 
 #endif //HELLOVULKAN_ANY_H
