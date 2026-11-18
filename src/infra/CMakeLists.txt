@@ -1,7 +1,12 @@
-# Infra — header-only foundation utilities (containers, tracing).
-#
-# A self-contained module that depends only on the C++ standard library.
-add_library(Infra INTERFACE)
+# Infra — foundation utilities, split into self-contained sub-modules:
+#   containers — header-only containers, no dependencies.
+#   serde      — serialization (INI reader), depends on containers.
+#   tracer     — tracing/benchmarking, depends on containers.
+add_subdirectory(containers)
+add_subdirectory(serde)
+add_subdirectory(tracer)
 
-target_include_directories(Infra INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(Infra INTERFACE cxx_std_23)
+# Umbrella target so consumers that want the whole infra can link a single
+# target; include directories and compile features flow through the modules.
+add_library(Infra INTERFACE)
+target_link_libraries(Infra INTERFACE InfraContainers InfraSerde InfraTracer)

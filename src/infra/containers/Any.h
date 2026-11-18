@@ -110,7 +110,7 @@ struct Ops
     {
         if constexpr (IsUseSmallBufferOptimize)
         {
-            std::construct_at(reinterpret_cast<const T*>(Storage.Buffer), std::forward<Args>(InArgs)...);
+            std::construct_at(reinterpret_cast<T*>(Storage.Buffer), std::forward<Args>(InArgs)...);
         }
         else
         {
@@ -134,7 +134,7 @@ struct Ops
     {
         if constexpr (IsUseSmallBufferOptimize)
         {
-            std::construct_at(reinterpret_cast<T*>(Dst.Buffer), Src.Ptr);
+            std::construct_at(reinterpret_cast<T*>(Dst.Buffer), *getPtr(Src));
         }
         else
         {
@@ -147,7 +147,7 @@ struct Ops
         if constexpr (IsUseSmallBufferOptimize)
         {
             std::construct_at(reinterpret_cast<T*>(Dst.Buffer), std::move(*getPtr(Src)));
-            std::destroy_at(std::launder(reinterpret_cast<T*>(Dst.Buffer)));
+            // @notice 只搬移构造到 Dst，源对象的析构由调用方(Any 的移动构造)负责。
         }
         else
         {
@@ -162,7 +162,7 @@ struct Ops
 #endif
     ) noexcept
     {
-        if (Id == getTypeId<T>())
+        if (Id == any_detail::getTypeId<T>())
         {
             return getPtr(Storage);
         }
@@ -175,7 +175,7 @@ struct Ops
         return nullptr;
     }
 
-    static TypeId_t getTypeId() noexcept { return getTypeId<T>(); }
+    static TypeId_t getTypeId() noexcept { return any_detail::getTypeId<T>(); }
 
 #if HAS_RTTI
     static const std::type_info& getTypeInfo() /* noexcept */ { return typeid(T); }
@@ -332,10 +332,10 @@ public:
     [[nodiscard]] bool HasValue() const noexcept { return VTable != nullptr; }
     explicit operator bool() const noexcept { return HasValue(); }
 
-    TypeId_t getTypeId() const noexcept { return VTable ? VTable->GetTypeId() : nullptr; }
+    [[nodiscard]] TypeId_t getTypeId() const noexcept { return VTable ? VTable->GetTypeId() : nullptr; }
 
 #if HAS_RTTI
-    const std::type_info& type() const noexcept
+    [[nodiscard]] const std::type_info& type() const noexcept
     {
         return VTable ? VTable->GetTypeInfo() : typeid(void);
     }

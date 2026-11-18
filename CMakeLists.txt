@@ -19,6 +19,16 @@ add_subdirectory(src/runtime/platform)
 add_subdirectory(src/runtime/renderer)
 
 # ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+# CTest provides the BUILD_TESTING option (default ON); each module's tests
+# live under tests/ and are registered with add_test.
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
+
+# ---------------------------------------------------------------------------
 # Executable
 # ---------------------------------------------------------------------------
 add_executable(HelloVulkan src/main.cpp)
@@ -29,7 +39,7 @@ else()
     target_compile_options(HelloVulkan PRIVATE -Wall -Wextra)
 endif()
 
-target_link_libraries(HelloVulkan PRIVATE Renderer GenericPlatform)
+target_link_libraries(HelloVulkan PRIVATE Renderer GenericPlatform Infra)
 
 # Copy the runtime DLLs of the executable's transitive dependencies (e.g.
 # SDL3.dll, supplied by the renderer module) next to it, so it runs out of the
