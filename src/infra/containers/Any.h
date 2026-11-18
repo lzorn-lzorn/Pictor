@@ -233,7 +233,7 @@ public:
 
     template <typename T,
         typename DT = std::decay_t<T>,
-        std::enable_if_t<!std::is_same_v<typename DT, Any>, int32_t> = 0,
+        std::enable_if_t<!std::is_same_v<DT, Any>, int32_t> = 0,
         std::enable_if_t<std::is_copy_constructible_v<DT>, int32_t> = 0
     >
     explicit Any(T&& Value) noexcept
