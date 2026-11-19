@@ -2,8 +2,8 @@
 // Created by Administrator on 2026/11/16.
 //
 
-#ifndef HELLOVULKAN_ANY_H
-#define HELLOVULKAN_ANY_H
+#ifndef PICTOR_INFRA_ANY_H
+#define PICTOR_INFRA_ANY_H
 
 #include <cstddef>
 #include <cstring>
@@ -329,8 +329,8 @@ public:
         std::swap(VTable, Other.VTable);
     }
 
-    [[nodiscard]] bool HasValue() const noexcept { return VTable != nullptr; }
-    explicit operator bool() const noexcept { return HasValue(); }
+    [[nodiscard]] bool hasValue() const noexcept { return VTable != nullptr; }
+    explicit operator bool() const noexcept { return hasValue(); }
 
     [[nodiscard]] TypeId_t getTypeId() const noexcept { return VTable ? VTable->GetTypeId() : nullptr; }
 
@@ -419,4 +419,4 @@ Any makeAny(std::initializer_list<U> InitParamList, Args&&... ConsturctParams) {
     return Any(std::in_place_type<T>, InitParamList, std::forward<Args>(ConsturctParams)...);
 }
 
-#endif //HELLOVULKAN_ANY_H
+#endif //PICTOR_INFRA_ANY_H

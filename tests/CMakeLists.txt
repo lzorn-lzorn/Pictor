@@ -10,7 +10,9 @@ function(pictor_add_test TestName)
     target_link_libraries(${TestName} PRIVATE Infra)
     target_include_directories(${TestName} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_features(${TestName} PRIVATE cxx_std_23)
-    target_compile_definitions(${TestName} PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_definitions(${TestName} PRIVATE
+        TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 
     if(MSVC)
         target_compile_options(${TestName} PRIVATE /W4 /utf-8)
@@ -23,3 +25,4 @@ endfunction()
 
 # serde module tests
 pictor_add_test(IniFileReaderTests IniFileReaderTests.cpp)
+pictor_add_test(SerdeEngineTests SerdeEngineTests.cpp)
