@@ -1,0 +1,8 @@
+//
+// Created by Lzorn on 2026/11/20.
+//
+
+#ifndef PICTOR_SIMDCONTROLBYTE_H
+#define PICTOR_SIMDCONTROLBYTE_H
+
+#endif //PICTOR_SIMDCONTROLBYTE_H

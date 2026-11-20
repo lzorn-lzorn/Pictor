@@ -6,8 +6,8 @@
 // 标量用 std::variant 存储，数组/对象用 std::unique_ptr 打破递归。
 //
 
-#ifndef CORE_SERDE_ADT_HPP
-#define CORE_SERDE_ADT_HPP
+#ifndef INFRA_SERDE_ADT_HPP
+#define INFRA_SERDE_ADT_HPP
 #pragma once
 
 #include <chrono>
@@ -182,4 +182,4 @@ private:
 
 } // namespace infra
 
-#endif // CORE_SERDE_ADT_HPP
+#endif // INFRA_SERDE_ADT_HPP

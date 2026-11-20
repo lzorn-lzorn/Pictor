@@ -11,7 +11,7 @@
 #include <sstream>
 
 #include "infra/serde/parser/Ini.h"
-#include "infra/serde/parser/IniFile.h"
+#include "infra/serde/parser/IniFile.hpp"
 
 namespace
 {

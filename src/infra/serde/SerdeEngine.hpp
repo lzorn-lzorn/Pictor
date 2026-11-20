@@ -9,8 +9,8 @@
 // 后端工厂见 SerdeEngineFactory.hpp; SerdeServer 通过 getEngineFor() 分派。
 //
 
-#ifndef CORE_SERDE_ENGINE_HPP
-#define CORE_SERDE_ENGINE_HPP
+#ifndef INFRA_SERDE_ENGINE_HPP
+#define INFRA_SERDE_ENGINE_HPP
 #pragma once
 
 #include <string>
@@ -103,4 +103,4 @@ public:
 
 } // namespace infra
 
-#endif // CORE_SERDE_ENGINE_HPP
+#endif // INFRA_SERDE_ENGINE_HPP

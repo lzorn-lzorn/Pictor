@@ -6,9 +6,8 @@
 // SerdeServer 维护根目录；SerdeSpace/SerdeUnit 本质是路径抽象，内部通过文件系统操作。
 //
 
-#ifndef CORE_SERDE_SERVER_HPP
-#define CORE_SERDE_SERVER_HPP
-#pragma once
+#ifndef INFRA_SERDE_SERVER_HPP
+#define INFRA_SERDE_SERVER_HPP
 
 #include <expected>
 #include <filesystem>
@@ -250,4 +249,4 @@ private:
 
 } // namespace infra
 
-#endif // CORE_SERDE_SERVER_HPP
+#endif // INFRA_SERDE_SERVER_HPP

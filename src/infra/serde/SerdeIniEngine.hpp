@@ -12,8 +12,8 @@
 //       控制时直接使用 ::Ini —— 配置文件仍是 Ini 独立用法的主流场景。
 //
 
-#ifndef CORE_SERDE_INI_ENGINE_HPP
-#define CORE_SERDE_INI_ENGINE_HPP
+#ifndef INFRA_SERDE_INI_ENGINE_HPP
+#define INFRA_SERDE_INI_ENGINE_HPP
 #pragma once
 
 #include <charconv>
@@ -234,4 +234,4 @@ private:
 
 } // namespace infra
 
-#endif // CORE_SERDE_INI_ENGINE_HPP
+#endif // INFRA_SERDE_INI_ENGINE_HPP

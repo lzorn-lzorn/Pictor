@@ -5,9 +5,8 @@
 // 相应值在序列化时跳过, 读取时映射为字符串(日期时间)。
 //
 
-#ifndef CORE_SERDE_TOML_ENGINE_HPP
-#define CORE_SERDE_TOML_ENGINE_HPP
-#pragma once
+#ifndef INFRA_SERDE_TOML_ENGINE_HPP
+#define INFRA_SERDE_TOML_ENGINE_HPP
 
 #include <sstream>
 #include <stdexcept>
@@ -142,4 +141,4 @@ private:
 
 } // namespace infra
 
-#endif // CORE_SERDE_TOML_ENGINE_HPP
+#endif // INFRA_SERDE_TOML_ENGINE_HPP

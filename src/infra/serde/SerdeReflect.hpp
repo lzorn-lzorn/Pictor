@@ -1,4 +1,5 @@
-#pragma once
+#ifndef INFRA_SERDE_SERDEREFLECT_HPP_
+#define INFRA_SERDE_SERDEREFLECT_HPP_
 
 #include <infra/reflect/TypeInfo.hpp>
 #include <infra/serde/SerdeADT.hpp>
@@ -167,3 +168,4 @@ Ty valueCast(const SerdeADT &Value)
 
 
 }
+#endif

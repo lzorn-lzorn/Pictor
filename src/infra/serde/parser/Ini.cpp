@@ -7,7 +7,7 @@
 
 #include "Ini.h"
 
-#include "IniFile.h"
+#include "IniFile.hpp"
 
 #include <algorithm>
 #include <cctype>

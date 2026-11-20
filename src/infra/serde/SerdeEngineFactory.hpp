@@ -5,9 +5,8 @@
 // 未知后端返回 nullptr。SerdeServer 通过本头文件取引擎。
 //
 
-#ifndef CORE_SERDE_ENGINE_FACTORY_HPP
-#define CORE_SERDE_ENGINE_FACTORY_HPP
-#pragma once
+#ifndef INFRA_SERDE_ENGINE_FACTORY_HPP
+#define INFRA_SERDE_ENGINE_FACTORY_HPP
 
 #include <infra/serde/SerdeEngine.hpp>
 #include <infra/serde/SerdeJsonEngine.hpp>
@@ -33,4 +32,4 @@ inline SerdeEngine *getEngineFor(ESerdeBackend Backend)
 
 } // namespace infra
 
-#endif // CORE_SERDE_ENGINE_FACTORY_HPP
+#endif // INFRA_SERDE_ENGINE_FACTORY_HPP
