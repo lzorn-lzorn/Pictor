@@ -26,7 +26,7 @@ public:
     static constexpr std::uint8_t EmptyByte = 0xFF;
     using MaskType = std::uint16_t;
 
-    SimdControlByte() noexcept { std::memset(Bytes, EmptyByte, GroupSize); }
+    SIMDControlByte() noexcept { std::memset(Bytes, EmptyByte, GroupSize); }
 
     // @brief 返回与指纹匹配的槽位掩码
     [[nodiscard]] MaskType matchFingerprint(std::uint8_t fingerprint) const noexcept {

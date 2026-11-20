@@ -4,6 +4,11 @@
 # Test data files (e.g. config.ini) live in this directory and are located
 # through the TEST_DATA_DIR compile definition, so tests work no matter which
 # working directory they are launched from (CTest, an IDE, or a shell).
+#
+# `InfraTests` is a convenience target that builds every test executable at
+# once; the tests themselves run through CTest (`ctest --test-dir <build>`).
+set(INFRA_TEST_TARGETS "")
+
 function(pictor_add_test TestName)
     add_executable(${TestName} ${ARGN})
 
@@ -21,8 +26,11 @@ function(pictor_add_test TestName)
     endif()
 
     add_test(NAME ${TestName} COMMAND ${TestName})
+    set(INFRA_TEST_TARGETS ${INFRA_TEST_TARGETS} ${TestName} PARENT_SCOPE)
 endfunction()
 
 # serde module tests
 pictor_add_test(IniFileReaderTests IniFileReaderTests.cpp)
 pictor_add_test(SerdeEngineTests SerdeEngineTests.cpp)
+
+add_custom_target(InfraTests DEPENDS ${INFRA_TEST_TARGETS})

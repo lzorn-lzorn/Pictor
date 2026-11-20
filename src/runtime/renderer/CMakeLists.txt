@@ -35,19 +35,34 @@ FetchContent_Declare(Vulkan-Headers
 FetchContent_MakeAvailable(Vulkan-Headers)
 
 # ---------------------------------------------------------------------------
-# DXC (DirectX Shader Compiler) — prebuilt Windows binary, pinned release.
+# DXC (DirectX Shader Compiler) — compiles HLSL to SPIR-V.
 #
-# A prebuilt package (dxc.exe + dxcompiler.dll) is downloaded and extracted
-# once at configure time; the hash pins the exact artifact. Set -DDXC_EXECUTABLE
-# to a local dxc.exe to skip the download.
+# Resolution order:
+#   1. -DDXC_EXECUTABLE=/path/to/dxc (explicit override).
+#   2. On non-Windows hosts a native `dxc` already on PATH (e.g. installed via
+#      Homebrew); the Windows .exe below cannot run under macOS/Linux.
+#   3. On Windows a pinned prebuilt package (dxc.exe + dxcompiler.dll) is
+#      downloaded and extracted once at configure time; the hash pins the exact
+#      artifact.
 # ---------------------------------------------------------------------------
-set(DXC_VERSION "v1.9.2609")
-set(DXC_URL "https://github.com/microsoft/DirectXShaderCompiler/releases/download/${DXC_VERSION}/dxc_2026_09_29.zip")
-set(DXC_SHA256 "ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1")
+set(DXC_EXECUTABLE "" CACHE FILEPATH "Path to dxc (empty = auto-detect/download)")
 
-set(DXC_EXECUTABLE "" CACHE FILEPATH "Path to dxc.exe (empty = auto-download a pinned release)")
+if(NOT DXC_EXECUTABLE AND NOT WIN32)
+    find_program(_PICTOR_DXC NAMES dxc)
+    if(NOT _PICTOR_DXC)
+        message(FATAL_ERROR
+            "No native `dxc` found on PATH. Install DirectX Shader Compiler "
+            "(`brew install directx-shader-compiler`) or pass "
+            "-DDXC_EXECUTABLE=/path/to/dxc.")
+    endif()
+    set(DXC_EXECUTABLE "${_PICTOR_DXC}")
+endif()
 
 if(NOT DXC_EXECUTABLE)
+    set(DXC_VERSION "v1.9.2609")
+    set(DXC_URL "https://github.com/microsoft/DirectXShaderCompiler/releases/download/${DXC_VERSION}/dxc_2026_09_29.zip")
+    set(DXC_SHA256 "ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1")
+
     set(DXC_EXTRACT_DIR "${CMAKE_BINARY_DIR}/_dxc")
     if(NOT EXISTS "${DXC_EXTRACT_DIR}")
         file(DOWNLOAD "${DXC_URL}" "${CMAKE_BINARY_DIR}/dxc.zip"

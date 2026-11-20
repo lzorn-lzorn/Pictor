@@ -5,7 +5,7 @@
 // getenv 在 MSVC 下被标记为 unsafe, 本文件只用其读取环境变量(不做写入)
 #define _CRT_SECURE_NO_WARNINGS
 
-#include "Ini.h"
+#include "Ini.hpp"
 
 #include "IniFile.hpp"
 

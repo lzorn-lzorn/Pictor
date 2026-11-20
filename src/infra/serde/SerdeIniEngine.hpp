@@ -25,7 +25,7 @@
 #include <vector>
 
 #include <infra/serde/SerdeEngine.hpp>
-#include <infra/serde/parser/Ini.h>
+#include <infra/serde/parser/Ini.hpp>
 
 namespace infra
 {

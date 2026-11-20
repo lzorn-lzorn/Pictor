@@ -7,7 +7,7 @@ add_library(InfraSerde STATIC
 )
 
 # Expose the src root so consumers include headers with the "infra/" prefix,
-# e.g. #include "infra/serde/parser/Ini.h" / #include <infra/serde/Serde.hpp>.
+# e.g. #include "infra/serde/parser/Ini.hpp" / #include <infra/serde/Serde.hpp>.
 target_include_directories(InfraSerde PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
 target_link_libraries(InfraSerde PUBLIC InfraCommon InfraContainers)

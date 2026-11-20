@@ -5,8 +5,8 @@
 // binary / datetime 以单键对象 {"$binary": "..."} / {"$datetime": "..."} 编码。
 //
 
-#ifndef INFRA_SERDE_INI_ENGINE_HPP
-#define INFRA_SERDE_INI_ENGINE_HPP
+#ifndef INFRA_SERDE_JSON_ENGINE_HPP
+#define INFRA_SERDE_JSON_ENGINE_HPP
 #pragma once
 
 #include <chrono>
@@ -332,4 +332,4 @@ private:
 
 } // namespace infra
 
-#endif // INFRA_SERDE_INI_ENGINE_HPP
+#endif // INFRA_SERDE_JSON_ENGINE_HPP

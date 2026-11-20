@@ -10,7 +10,7 @@
 #include <filesystem>
 #include <sstream>
 
-#include "infra/serde/parser/Ini.h"
+#include "infra/serde/parser/Ini.hpp"
 #include "infra/serde/parser/IniFile.hpp"
 
 namespace
@@ -373,8 +373,9 @@ PICTOR_TEST_CASE(FileLayerIsDecoupledFromParsing)
     const auto Missing = readIniFile(TEST_DATA_DIR "/does_not_exist.ini");
     PICTOR_CHECK(!Missing.has_value());
     PICTOR_CHECK_EQ(Missing.error().Code, IniError::Code::CannotOpenFile);
-    PICTOR_CHECK_EQ(IniError::asString(Missing.error()),
-                    "cannot open file: E:/Pictor/tests/does_not_exist.ini");
+    // 错误信息携带完整路径, 随平台/机器而异; 只校验文件名片段以保证可移植。
+    const std::string MissingMessage = IniError::asString(Missing.error());
+    PICTOR_CHECK(MissingMessage.find("does_not_exist.ini") != std::string::npos);
 
     Ini Reader;
     PICTOR_CHECK(Reader.load(TEST_DATA_DIR "/config.ini").has_value());
