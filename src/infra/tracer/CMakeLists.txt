@@ -6,5 +6,5 @@ add_library(InfraTracer INTERFACE)
 # e.g. #include "infra/tracer/Benchmark.h".
 target_include_directories(InfraTracer INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
-target_link_libraries(InfraTracer INTERFACE InfraContainers)
+target_link_libraries(InfraTracer INTERFACE InfraCommon InfraContainers)
 target_compile_features(InfraTracer INTERFACE cxx_std_23)

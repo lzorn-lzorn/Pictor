@@ -10,7 +10,7 @@ add_library(InfraSerde STATIC
 # e.g. #include "infra/serde/parser/Ini.h" / #include <infra/serde/Serde.hpp>.
 target_include_directories(InfraSerde PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
-target_link_libraries(InfraSerde PUBLIC InfraContainers)
+target_link_libraries(InfraSerde PUBLIC InfraCommon InfraContainers)
 target_compile_features(InfraSerde PUBLIC cxx_std_23)
 
 # infra/reflect 的注册宏依赖 __VA_OPT__ 等 C++20 预处理特性

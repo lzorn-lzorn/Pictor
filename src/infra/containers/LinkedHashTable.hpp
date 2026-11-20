@@ -5,6 +5,7 @@
 #ifndef PICTOR_LINKEDHASHTABLE_H
 #define PICTOR_LINKEDHASHTABLE_H
 
+#include <infra/common/SIMDControlByte.hpp>
 
 class LinkedHashTable
 {
