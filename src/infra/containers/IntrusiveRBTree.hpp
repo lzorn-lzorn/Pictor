@@ -185,14 +185,53 @@ namespace rbtree_detail
         }
         return Y;
     }
+
+    /**
+     * @brief 默认的「键 == 值」提取器（未指定 KeyOfValue 时使用）。
+     */
+    struct Identity
+    {
+        template <typename V>
+        V const& operator()(V const& V_) const noexcept { return V_; }
+    };
+
+    /**
+     * @brief size 跟踪策略：ConstantTimeSize=true 时维护 O(1) size。
+     */
+    template <bool ConstantTimeSize>
+    struct SizeTracker;
+
+    template <>
+    struct SizeTracker<true>
+    {
+        std::size_t Size = 0;
+        void increment() noexcept { ++Size; }
+        void decrement() noexcept { --Size; }
+        void reset() noexcept { Size = 0; }
+    };
+
+    template <>
+    struct SizeTracker<false>
+    {
+        // 不维护 size：size() 退化为 O(n) 遍历计数。
+        void increment() noexcept {}
+        void decrement() noexcept {}
+        void reset() noexcept {}
+    };
 }
 
 /**
  * @brief 侵入式红黑树：键唯一、有序迭代, 语义对齐 std::set。
  * @notice 容器不拥有节点；插入会重置节点链接, 被 erase/clear 过的节点可再次插入；
- *         容器非线程安全。
+ *         容器非线程安全。KeyOfValue 用于从值提取键（透明键查找，等价 boost 的
+ *         key_of_value）；ConstantTimeSize=false 时不维护 size（size() 退化为 O(n)）。
  */
-template <typename T, typename CompareCallable = std::less<>>
+template <
+    typename T,
+    typename CompareCallable = std::less<>,
+    typename KeyOfValue      = rbtree_detail::Identity,
+    bool     ConstantTimeSize = true
+>
 class IntrusiveRBTree
 {
     static_assert(std::is_base_of_v<RBNodeBase, T>, "T must publicly derive from RBNodeBase");
@@ -200,15 +239,29 @@ class IntrusiveRBTree
 public:
     // ---- 类型别名 ----
     using value_type      = T;
-    using key_type        = T;
+    using key_type        = std::decay_t<std::invoke_result_t<KeyOfValue const&, T const&>>;
     using size_type       = std::size_t;
     using difference_type = std::ptrdiff_t;
     using key_compare     = CompareCallable;
-    using value_compare   = CompareCallable;
     using reference       = T&;
     using const_reference = T const&;
     using pointer         = T*;
     using const_pointer   = T const*;
+
+    /**
+     * @brief 值比较器：先提取键再用 key_compare 比较。
+     * @notice 供 getValueCompare() 与 operator< 使用，与透明键查找保持一致。
+     */
+    struct value_compare
+    {
+        CompareCallable Comp;
+        KeyOfValue      KeyOf;
+
+        bool operator()(T const& L, T const& R) const
+        {
+            return Comp(KeyOf(L), KeyOf(R));
+        }
+    };
 
     template <bool IsConst> class Iterator;
     using iterator               = Iterator<false>;
@@ -227,6 +280,14 @@ public:
      */
     explicit IntrusiveRBTree(CompareCallable Comp) noexcept : Compare(std::move(Comp)) { initHeader(); }
 
+    /**
+     * @brief 用指定比较器与键提取器构造空树。
+     * @param Comp 键比较器。
+     * @param KeyOf 从值提取键的可调用对象（用于透明键查找）。
+     */
+    IntrusiveRBTree(CompareCallable Comp, KeyOfValue KeyOf) noexcept
+        : Compare(std::move(Comp)), KeyOfValue_(std::move(KeyOf)) { initHeader(); }
+
     IntrusiveRBTree(IntrusiveRBTree const&) = delete;
     IntrusiveRBTree(IntrusiveRBTree&&) = delete;
     IntrusiveRBTree& operator=(IntrusiveRBTree const&) = delete;
@@ -236,15 +297,34 @@ public:
 
     /** @brief 是否为空。 @return true 表示不含任何元素。 */
     [[nodiscard]] bool empty() const noexcept { return root() == nullptr; }
-    /** @brief 元素个数。 @return 当前树中元素数量。 */
-    [[nodiscard]] size_type size() const noexcept { return Size; }
+    /**
+     * @brief 元素个数。
+     * @return 当前树中元素数量。
+     * @notice ConstantTimeSize=false 时退化为 O(n) 遍历计数。
+     */
+    [[nodiscard]] size_type size() const noexcept
+    {
+        if constexpr (ConstantTimeSize)
+        {
+            return SizeTracker_.Size;
+        }
+        else
+        {
+            size_type Count = 0;
+            for (auto It = cbegin(); It != cend(); ++It)
+            {
+                ++Count;
+            }
+            return Count;
+        }
+    }
 
     // ---- 观察器 ----
 
     /** @brief 返回键比较器（副本）。 @return 用于比较键的可调用对象。 */
     key_compare   getKeyCompare()   const { return Compare; }
-    /** @brief 返回值比较器（副本）。 @return 用于比较值的可调用对象。 */
-    value_compare getValueCompare() const { return Compare; }
+    /** @brief 返回值比较器（副本）。 @return 先提取键再比较的可调用对象。 */
+    value_compare getValueCompare() const { return value_compare{ Compare, KeyOfValue_ }; }
 
     // ---- 迭代器 ----
 
@@ -292,12 +372,12 @@ public:
         {
             Parent = Current;
             T const& CurrentValue = *static_cast<T const*>(Current);
-            if (isLess(Value, CurrentValue))
+            if (isLess(keyOf(Value), keyOf(CurrentValue)))
             {
                 GoLeft = true;
                 Current = Current->Left;
             }
-            else if (isLess(CurrentValue, Value))
+            else if (isLess(keyOf(CurrentValue), keyOf(Value)))
             {
                 GoLeft = false;
                 Current = Current->Right;
@@ -338,7 +418,7 @@ public:
         }
 
         insertFixup(&Node);
-        ++Size;
+        SizeTracker_.increment();
         return { iterator(&Node), true };
     }
 
@@ -369,7 +449,7 @@ public:
         ++Next;
         RBNodeBase* Removed = eraseNode(Pos.Node);
         Removed->reset();
-        --Size;
+        SizeTracker_.decrement();
         return Next;
     }
 
@@ -459,8 +539,9 @@ public:
        
         Header.setParent(OtherRoot);
         Other.Header.setParent(ThisRoot);
-        std::swap(Size, Other.Size);
+        std::swap(SizeTracker_, Other.SizeTracker_);
         std::swap(Compare, Other.Compare);
+        std::swap(KeyOfValue_, Other.KeyOfValue_);
         
         if (ThisRoot)
         {
@@ -598,7 +679,7 @@ public:
      */
     friend bool operator==(IntrusiveRBTree const& L, IntrusiveRBTree const& R)
     {
-        if (L.Size != R.Size)
+        if (L.size() != R.size())
         {
             return false;
         }
@@ -606,8 +687,8 @@ public:
         auto Ri = R.begin();
         for (auto Le = L.end(); Li != Le; ++Li, ++Ri)
         {
-            // Equivalence under the ordering relation: !(a<b) && !(b<a).
-            if (L.isLess(*Li, *Ri) || L.isLess(*Ri, *Li))
+            // 等价关系：!(a<b) && !(b<a)，先提取键再比较。
+            if (L.isLess(L.keyOf(*Li), L.keyOf(*Ri)) || L.isLess(L.keyOf(*Ri), L.keyOf(*Li)))
             {
                 return false;
             }
@@ -619,7 +700,7 @@ public:
     /** @brief 字典序小于比较。 */
     friend bool operator<(IntrusiveRBTree const& L, IntrusiveRBTree const& R)
     {
-        return std::lexicographical_compare(L.begin(), L.end(), R.begin(), R.end(), L.Compare);
+        return std::lexicographical_compare(L.begin(), L.end(), R.begin(), R.end(), L.getValueCompare());
     }
     /** @brief 大于比较。 */
     friend bool operator>(IntrusiveRBTree const& L, IntrusiveRBTree const& R) { return R < L; }
@@ -696,7 +777,14 @@ public:
         bool Ok = true;
         std::size_t Count = 0;
         blackHeight(R, Count, Ok);
-        return Ok && Count == Size;
+        if constexpr (ConstantTimeSize)
+        {
+            return Ok && Count == SizeTracker_.Size;
+        }
+        else
+        {
+            return Ok;
+        }
     }
 
 private:
@@ -706,13 +794,17 @@ private:
         Header.reset();
         Header.Left = &Header;
         Header.Right = &Header;
-        Size = 0;
+        SizeTracker_.reset();
     }
 
     /** @brief 返回树根（header 的父指针）, 空树为 nullptr。 */
     RBNodeBase*       root()       noexcept { return Header.Parent(); }
     /** @brief 返回树根（const 版本）。 */
     RBNodeBase const* root() const noexcept { return Header.Parent(); }
+
+    /** @brief 从值提取键（委托 KeyOfValue_）。 */
+    template <typename V>
+    decltype(auto) keyOf(V&& V_) const { return KeyOfValue_(std::forward<V>(V_)); }
 
     /** @brief 用比较器比较 L 与 R（异构）, 等价于 Compare(L, R)。 */
     template <typename A, typename B>
@@ -726,11 +818,11 @@ private:
         while (Current)
         {
             T const& Value = *static_cast<T const*>(Current);
-            if (isLess(Key, Value))
+            if (isLess(Key, keyOf(Value)))
             {
                 Current = Current->Left;
             }
-            else if (isLess(Value, Key))
+            else if (isLess(keyOf(Value), Key))
             {
                 Current = Current->Right;
             }
@@ -751,7 +843,7 @@ private:
         while (Current)
         {
             T const& Value = *static_cast<T const*>(Current);
-            if (!isLess(Value, Key))   // Value >= Key
+            if (!isLess(keyOf(Value), Key))   // key >= Key
             {
                 Result = Current;
                 Current = Current->Left;
@@ -773,7 +865,7 @@ private:
         while (Current)
         {
             T const& Value = *static_cast<T const*>(Current);
-            if (isLess(Key, Value))   // Key < Value  =>  Value > Key
+            if (isLess(Key, keyOf(Value)))   // Key < key  =>  value > Key
             {
                 Result = Current;
                 Current = Current->Left;
@@ -1145,8 +1237,9 @@ private:
 
 private:
     RBNodeBase Header;
-    size_type Size = { 0 };
     [[no_unique_address]] CompareCallable Compare;
+    [[no_unique_address]] KeyOfValue      KeyOfValue_;
+    [[no_unique_address]] rbtree_detail::SizeTracker<ConstantTimeSize> SizeTracker_;
 };
 
 /**
@@ -1154,8 +1247,9 @@ private:
  * @param L 左树。
  * @param R 右树。
  */
-template <typename T, typename CompareCallable>
-void swap(IntrusiveRBTree<T, CompareCallable>& L, IntrusiveRBTree<T, CompareCallable>& R) noexcept
+template <typename T, typename CompareCallable, typename KeyOfValue, bool ConstantTimeSize>
+void swap(IntrusiveRBTree<T, CompareCallable, KeyOfValue, ConstantTimeSize>& L,
+          IntrusiveRBTree<T, CompareCallable, KeyOfValue, ConstantTimeSize>& R) noexcept
 {
     L.swap(R);
 }

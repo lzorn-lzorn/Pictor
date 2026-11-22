@@ -39,6 +39,17 @@ namespace
         bool operator()(int A, Item const& B) const { return A > B.Key; }
     };
 
+    // 值类型不定义 operator<，用 KeyOfValue 提取键做透明键查找（boost key_of_value 模型）。
+    struct KeyedItem : RBNodeBase
+    {
+        int Id = 0;
+    };
+
+    struct ExtractId
+    {
+        int operator()(KeyedItem const& V) const { return V.Id; }
+    };
+
     // Collects keys in iteration order as a comma-separated string, for
     // readable diagnostics.
     std::string collectKeys(IntrusiveRBTree<Item> const& Tree)
@@ -468,6 +479,69 @@ PICTOR_TEST_CASE(CopyConstructsAnUnlinkedNode)
     PICTOR_CHECK_EQ(static_cast<Item const*>(&*It2)->Key, 2);
     PICTOR_CHECK_EQ(Tree.size(), 2u);
     PICTOR_CHECK(Tree.validate());
+}
+
+// ---- 透明键查找（KeyOfValue）与可选 size（ConstantTimeSize） ----
+
+PICTOR_TEST_CASE(TransparentKeyLookupViaKeyOfValue)
+{
+    // 值类型不定义 operator<，也无需跨类型 operator<：用 KeyOfValue 提取键，
+    // 比较器只比较键（等价 boost 的 key_of_value）。
+    using Tree = IntrusiveRBTree<KeyedItem, std::less<int>, ExtractId>;
+    Tree Tree_;
+    std::list<KeyedItem> Items;
+    for (int Id : {5, 3, 7, 1, 9})
+    {
+        Items.emplace_back();
+        Items.back().Id = Id;
+        Tree_.insert(Items.back());
+    }
+
+    PICTOR_CHECK_EQ(Tree_.size(), 5u);
+    PICTOR_CHECK(Tree_.find(9) != Tree_.end());
+    PICTOR_CHECK_EQ(Tree_.find(9)->Id, 9);
+    PICTOR_CHECK(Tree_.find(0) == Tree_.end());
+    PICTOR_CHECK_EQ(Tree_.count(3), 1u);
+    PICTOR_CHECK(Tree_.contains(3));
+    PICTOR_CHECK_EQ(Tree_.getLowerBound(4)->Id, 5);
+    PICTOR_CHECK_EQ(Tree_.getUpperBound(5)->Id, 7);
+    PICTOR_CHECK_EQ(Tree_.erase(7), 1u);
+    PICTOR_CHECK_EQ(Tree_.size(), 4u);
+
+    std::vector<int> Ids;
+    for (auto It = Tree_.cbegin(); It != Tree_.cend(); ++It)
+    {
+        Ids.push_back(It->Id);
+    }
+    PICTOR_CHECK_EQ(Ids, (std::vector<int>{1, 3, 5, 9}));
+    PICTOR_CHECK(Tree_.validate());
+}
+
+PICTOR_TEST_CASE(ConstantTimeSizeFalseFallsBackToLinearSize)
+{
+    using LinearTree = IntrusiveRBTree<Item, std::less<>, rbtree_detail::Identity, false>;
+    using FixedTree  = IntrusiveRBTree<Item, std::less<>, rbtree_detail::Identity, true>;
+
+    // size 成员被优化掉：对象更小。
+    PICTOR_CHECK(sizeof(LinearTree) < sizeof(FixedTree));
+
+    LinearTree Tree;
+    std::list<Item> Items;
+    for (int Key = 0; Key < 100; ++Key)
+    {
+        Items.emplace_back();
+        Items.back().Key = Key;
+        Tree.insert(Items.back());
+    }
+
+    PICTOR_CHECK_EQ(Tree.size(), 100u); // O(n)，但结果正确
+    PICTOR_CHECK(!Tree.empty());
+    PICTOR_CHECK(Tree.validate());
+
+    Tree.erase(0);
+    PICTOR_CHECK_EQ(Tree.size(), 99u);
+    PICTOR_CHECK(Tree.validate());
+    PICTOR_CHECK_EQ(static_cast<Item const*>(&*Tree.begin())->Key, 1);
 }
 
 int main()

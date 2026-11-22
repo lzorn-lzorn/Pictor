@@ -18,6 +18,9 @@
 2. **无需可复制/移动**（容器从不复制/移动元素）；若类型可复制，副本为**未链接**状态、需自行插入——元素在容器内期间地址必须稳定；
 3. **生命周期长于容器**：节点必须先于容器销毁前被移除或由调用方释放。
 
+排序键的给出方式有二选一：给 `T` 定义 `operator<`（配合默认透明比较器），或显式
+传入 `KeyOfValue` 提取器（见 §4）。
+
 ```cpp
 #include "infra/containers/IntrusiveRBTree.hpp"
 
@@ -26,7 +29,7 @@ struct Entity : RBNodeBase
     int    Id   = 0;
     std::string Name;
 
-    // std::less<> 默认按 operator< 排序
+    // 方式一：std::less<> 默认按 operator< 排序
     bool operator<(Entity const& Other) const { return Id < Other.Id; }
 };
 ```
@@ -70,8 +73,12 @@ Tree.erase(3);                 // 按键删除，返回删除个数（0 或 1）
 
 ## 3. 异构查找（直接用键查找，无需构造节点）
 
-默认比较器 `std::less<>` 是透明的，只要为「键类型 × 节点类型」补上 `<`，
-即可用裸键做 `find/getLowerBound/...`，而无需构造一个临时的 `T`：
+支持两种方式，任选其一。
+
+### 方式一：透明比较器 + 跨类型 `operator<`
+
+默认比较器 `std::less<>` 是透明的，只要为「键类型 × 节点类型」补上 `<`，即可用裸键
+做 `find/getLowerBound/...`：
 
 ```cpp
 bool operator<(Entity const& A, int B) { return A.Id < B; }
@@ -85,9 +92,56 @@ Tree.getUpperBound(2);
 Tree.getEqualRange(2);   // pair<iterator,iterator> [lower, upper)
 ```
 
+### 方式二：KeyOfValue 提取器（推荐，等价 boost 的 `key_of_value`）
+
+不必给 `T` 定义 `operator<`，也不必写跨类型 `operator<`：提供一个从 `T` 提取键的
+可调用对象，比较器只比较键。
+
+```cpp
+struct Entity : RBNodeBase
+{
+    int    Id   = 0;
+    std::string Name;
+    // 无需 operator<
+};
+
+struct ExtractId
+{
+    int operator()(Entity const& V) const { return V.Id; }
+};
+
+// 比较器比较键(int)，KeyOfValue 从值提取键(int)
+IntrusiveRBTree<Entity, std::less<int>, ExtractId> Tree;
+
+Tree.insert(node);          // 内部按 ExtractId(node) 排序
+Tree.find(2);               // 直接用 int 键查找，无需跨类型 operator<
+Tree.erase(2);
+Tree.getLowerBound(2);
+```
+
+`key_type` 自动推导为 `KeyOfValue` 的返回类型（此处为 `int`）。
+
 ---
 
-## 4. 自定义比较器
+## 4. 可选 size（ConstantTimeSize）
+
+`ConstantTimeSize=true`（默认）时维护一个 `size_t`，`size()` 为 `O(1)`；
+设为 `false` 则**不存储 size**（对象更小），`size()` 退化为 `O(n)` 遍历计数。
+
+```cpp
+// 默认：size() O(1)，每个容器多一个 size_t
+IntrusiveRBTree<Entity> A;
+
+// 不维护 size：对象更小，size() O(n)
+IntrusiveRBTree<Entity, std::less<>, rbtree_detail::Identity, false> B;
+```
+
+> `rbtree_detail::Identity` 是默认的「键 == 值」提取器；因模板参数按位置传递，
+> 指定第 4 个参数时需同时写出第 3 个。
+
+---
+
+## 5. 自定义比较器
 
 传入一个**透明**比较器即可既控制排序方向、又保留异构查找能力：
 
@@ -106,7 +160,7 @@ IntrusiveRBTree<Entity, Descending> Tree;   // 降序
 
 ---
 
-## 5. API 一览
+## 6. API 一览
 
 | 分类 | 成员 |
 |---|---|
@@ -121,11 +175,13 @@ IntrusiveRBTree<Entity, Descending> Tree;   // 降序
 | 比较 | `==`、`!=`、`<`、`<=`、`>`、`>=`（`==` 用排序等价关系，仅要求 `operator<`） |
 | 调试 | `validate()` |
 
-类型别名：`value_type/key_type/size_type/difference_type/reference/pointer/iterator/const_iterator/reverse_iterator`。
+模板参数：`IntrusiveRBTree<T, CompareCallable = std::less<>, KeyOfValue = rbtree_detail::Identity, ConstantTimeSize = true>`。
+
+类型别名：`value_type/key_type/size_type/difference_type/reference/pointer/iterator/const_iterator/reverse_iterator/key_compare/value_compare`。
 
 ---
 
-## 6. 迭代器
+## 7. 迭代器
 
 - 双向迭代器（`std::bidirectional_iterator_tag`），支持前向与反向遍历。
 - `*it` 返回 `T&`、`it->` 返回 `T*`；`const_iterator` 对应 `const` 版本。
@@ -140,7 +196,7 @@ for (auto It = Tree.crbegin(); It != Tree.crend(); ++It) { /* ... */ }
 
 ---
 
-## 7. 生命周期与所有权
+## 8. 生命周期与所有权
 
 - **插入**会重置节点的链接，因此被 `erase`/`clear` 过的节点可安全地再次 `insert`。
 - `erase(iterator)`/`clear()` 会把被移除节点的 `left/right/parent` 置空，使其回到干净、
@@ -153,11 +209,11 @@ for (auto It = Tree.crbegin(); It != Tree.crend(); ++It) { /* ... */ }
 Tree.clear_and_dispose([](Entity* E) { delete E; });
 ```
 
-- `swap` 交换两棵树（`O(1)`，含比较器与 size）。
+- `swap` 交换两棵树（`O(1)`，含比较器、键提取器与 size）。
 
 ---
 
-## 8. 复杂度
+## 9. 复杂度
 
 | 操作 | 复杂度 |
 |---|---|
@@ -166,25 +222,26 @@ Tree.clear_and_dispose([](Entity* E) { delete E; });
 | 单次迭代器 `++` / `--` | 均摊 `O(1)` |
 | `clear` | `O(n log n)` |
 | `clear_and_dispose` | `O(n log n)` |
-| `swap` / `empty` / `size` | `O(1)` |
+| `size` | `O(1)`（默认）或 `O(n)`（`ConstantTimeSize=false`） |
+| `swap` / `empty` | `O(1)` |
 | `validate` | `O(n)` |
 
 ---
 
-## 9. 线程安全
+## 10. 线程安全
 
 容器**非线程安全**。并发修改，或在另一线程读取时修改，均为未定义行为。
 需要同步时请由调用方加锁（红黑树本身不含任何锁）。
 
 ---
 
-## 10. 调试
+## 11. 调试
 
 `validate()` 以 `O(n)` 校验全部红黑不变量，返回 `false` 表示结构被破坏：
 
 - 根为黑；
 - 不存在「红-红」父子；
 - 所有叶路径黑高相等；
-- 父子指针一致、`size()` 与实际节点数一致。
+- 父子指针一致；`ConstantTimeSize=true` 时核对 `size()` 与实际节点数一致。
 
 建议在 Debug 构建的测试/断言中周期性调用，用于尽早暴露误用（如把节点重复插入两棵树）。
