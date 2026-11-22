@@ -33,4 +33,7 @@ endfunction()
 pictor_add_test(IniFileReaderTests IniFileReaderTests.cpp)
 pictor_add_test(SerdeEngineTests SerdeEngineTests.cpp)
 
+# containers module tests
+pictor_add_test(IntrusiveRBTreeTests IntrusiveRBTreeTests.cpp)
+
 add_custom_target(InfraTests DEPENDS ${INFRA_TEST_TARGETS})

@@ -2,6 +2,7 @@
 add_library(InfraContainers INTERFACE
         LinkedHashTable.hpp
         Any.hpp
+        IntrusiveRBTree.hpp
 )
 
 target_include_directories(InfraContainers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/../..)

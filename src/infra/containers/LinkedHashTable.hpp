@@ -6,7 +6,6 @@
 #define PICTOR_LINKEDHASHTABLE_H
 
 #include <infra/common/SIMDControlByte.hpp>
-#include <infra/common/CppStandardSupport.hpp>
 
 #include <functional>
 #include <memory>
