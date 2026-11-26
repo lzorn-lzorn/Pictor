@@ -36,5 +36,20 @@ pictor_add_test(SerdeEngineTests SerdeEngineTests.cpp)
 # containers module tests
 pictor_add_test(IntrusiveRBTreeTests IntrusiveRBTreeTests.cpp)
 pictor_add_test(LinkedHashTableTests LinkedHashTableTests.cpp)
+pictor_add_test(FlatHashTableTests FlatHashTableTests.cpp)
+
+# Hash-table benchmark — uses the project Bm framework (infra/tracer/Benchmark.hpp).
+# Built together with InfraTests but NOT registered with CTest; run manually:
+#   HashTableBenchmark.exe [output.json]
+add_executable(HashTableBenchmark HashTableBenchmark.cpp)
+target_link_libraries(HashTableBenchmark PRIVATE Infra)
+target_include_directories(HashTableBenchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(HashTableBenchmark PRIVATE cxx_std_23)
+if(MSVC)
+    target_compile_options(HashTableBenchmark PRIVATE /W4 /utf-8)
+else()
+    target_compile_options(HashTableBenchmark PRIVATE -Wall -Wextra)
+endif()
 
 add_custom_target(InfraTests DEPENDS ${INFRA_TEST_TARGETS})
+add_dependencies(InfraTests HashTableBenchmark)

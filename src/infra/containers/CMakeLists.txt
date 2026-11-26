@@ -1,6 +1,7 @@
 
 add_library(InfraContainers INTERFACE
         LinkedHashTable.hpp
+        FlatHashTable.hpp
         Any.hpp
         IntrusiveRBTree.hpp
 )

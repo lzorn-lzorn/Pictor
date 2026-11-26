@@ -666,7 +666,7 @@ PICTOR_TEST_CASE(BucketOperations)
     std::vector<int> Seen;
     for (std::size_t I = 0; I < BC; ++I)
     {
-        for (auto It = Map_.beginBucket(I); It != Map_.endBucket(I); ++It)
+        for (auto It = Map_.begin(I); It != Map_.end(I); ++It)
         {
             Seen.push_back(It->first);
         }
@@ -682,7 +682,7 @@ PICTOR_TEST_CASE(BucketOperations)
     for (int K = 0; K < 100; ++K)
     {
         bool Found = false;
-        for (auto It = Map_.cbeginBucket(Map_.getBucket(K)); It != Map_.cendBucket(Map_.getBucket(K)); ++It)
+        for (auto It = Map_.cbegin(Map_.getBucket(K)); It != Map_.cend(Map_.getBucket(K)); ++It)
         {
             if (It->first == K)
             {

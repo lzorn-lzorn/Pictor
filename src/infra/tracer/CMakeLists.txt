@@ -3,7 +3,7 @@
 add_library(InfraTracer INTERFACE)
 
 # Expose the src root so consumers include headers with the "infra/" prefix,
-# e.g. #include "infra/tracer/Benchmark.h".
+# e.g. #include "infra/tracer/Benchmark.hpp".
 target_include_directories(InfraTracer INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
 target_link_libraries(InfraTracer INTERFACE InfraCommon InfraContainers)
