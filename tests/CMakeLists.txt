@@ -35,5 +35,6 @@ pictor_add_test(SerdeEngineTests SerdeEngineTests.cpp)
 
 # containers module tests
 pictor_add_test(IntrusiveRBTreeTests IntrusiveRBTreeTests.cpp)
+pictor_add_test(LinkedHashTableTests LinkedHashTableTests.cpp)
 
 add_custom_target(InfraTests DEPENDS ${INFRA_TEST_TARGETS})
