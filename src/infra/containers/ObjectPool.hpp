@@ -181,10 +181,11 @@ struct Slot {
     AlignedStorage<Type> Storage;
     bool IsOccupied;
 
-    Slot() : Storage(), IsOccupied(false) {}
+    // @notice 不初始化 Storage（避免零填充 sizeof(Type) 字节）；Storage 仅在
+    //         placement-new 之后才被读取。
+    Slot() : IsOccupied(false) {}
 
-    Slot(Slot const &Other) : Storage(),
-                              IsOccupied(false) {
+    Slot(Slot const &Other) : IsOccupied(false) {
         if (Other.IsOccupied) {
             constructInStorage(Storage, *getObjectPointer(Other.Storage));
             IsOccupied = true;
@@ -193,16 +194,13 @@ struct Slot {
 
     Slot(Slot &&Other)
         noexcept(std::is_nothrow_move_constructible_v<Type>)
-        : Storage(),
-          IsOccupied(false) {
+        : IsOccupied(Other.IsOccupied) {
+        // @notice 采用标准移动语义：源保留其（被移动后的）值，不销毁源。这样
+        //         std::array<Slot> 等容器的默认移动才能保持源对象内部一致
+        //         （不再出现“槽位已空但计数未复位”的矛盾状态）。
         if (Other.IsOccupied) {
             constructInStorage(Storage,
                                std::move(*getObjectPointer(Other.Storage)));
-            IsOccupied = true;
-            // @notice 源即将被遗弃（如 vector 重分配后释放旧缓冲），
-            //         因此销毁其移动后的值。
-            destroyInStorage(Other.Storage);
-            Other.IsOccupied = false;
         }
     }
 
@@ -232,8 +230,6 @@ struct Slot {
             if (Other.IsOccupied) {
                 constructInStorage(Storage, std::move(*getObjectPointer(Other.Storage)));
                 IsOccupied = true;
-                destroyInStorage(Other.Storage);
-                Other.IsOccupied = false;
             }
         }
         return *this;
@@ -247,6 +243,9 @@ struct Slot {
 template <typename Type>
 struct CompactSlot {
     AlignedStorage<Type> Storage;
+
+    // @notice 空默认构造：不初始化 Storage（避免零填充）；该类型仍平凡可拷贝。
+    CompactSlot() {}
 };
 
 /**
@@ -329,6 +328,8 @@ private:
 
     using PropagateOnCopyAssignment = typename PoolTraits::propagate_on_container_copy_assignment;
     using PropagateOnMoveAssignment = typename PoolTraits::propagate_on_container_move_assignment;
+    using PropagateOnSwap           = typename PoolTraits::propagate_on_container_swap;
+    using IsAlwaysEqual             = typename PoolTraits::is_always_equal;
 
     // ------------------------------------------------------------------ //
     // 迭代器（双向；跳过空闲槽位）。                                     //
@@ -563,7 +564,7 @@ public:
 
     // @brief 移动赋值，遵循 propagate_on_container_move_assignment。
     ObjectPool& operator=(ObjectPool&& Other)
-        noexcept(PropagateOnMoveAssignment::value || std::is_empty_v<Allocator>) {
+        noexcept(PropagateOnMoveAssignment::value || IsAlwaysEqual::value) {
         moveAssignImpl(std::move(Other), PropagateOnMoveAssignment());
         return *this;
     }
@@ -581,30 +582,39 @@ public:
     // ------------------------------------------------------------------ //
     // @brief 带边界检查的元素访问，越界抛 std::out_of_range。
     // @param Pos 逻辑下标（第 Pos 个有效元素）
-    reference at(size_type Pos) {
-        checkIndex(Pos);
-        return (*this)[Pos];
-    }
+    reference at(size_type Pos) { return (*this)[Pos]; }
 
-    const_reference at(size_type Pos) const {
-        checkIndex(Pos);
-        return (*this)[Pos];
-    }
+    const_reference at(size_type Pos) const { return (*this)[Pos]; }
 
-    // @brief 无边界检查的元素访问（第 Pos 个有效元素）。
+    // @brief 元素访问（第 Pos 个有效元素）；越界抛 std::out_of_range。
+    // @notice 与 std::vector 不同，本 operator[] 做边界检查，避免越界 UB；
+    //         复杂度为 O(k)，k 为前导空洞数。
     reference operator[](size_type Pos) { return const_cast<reference>(static_cast<ObjectPool const &>(*this)[Pos]); }
 
     const_reference operator[](size_type Pos) const {
+        checkIndex(Pos);
         return *ObjectPoolDetail::getObjectPointer(Slots[findNthOccupied(Pos)].Storage);
     }
 
-    reference front() { return *ObjectPoolDetail::getObjectPointer(Slots[findFirstOccupied()].Storage); }
+    reference front() {
+        checkNotEmpty();
+        return *ObjectPoolDetail::getObjectPointer(Slots[findFirstOccupied()].Storage);
+    }
 
-    const_reference front() const { return *ObjectPoolDetail::getObjectPointer(Slots[findFirstOccupied()].Storage); }
+    const_reference front() const {
+        checkNotEmpty();
+        return *ObjectPoolDetail::getObjectPointer(Slots[findFirstOccupied()].Storage);
+    }
 
-    reference back() { return *ObjectPoolDetail::getObjectPointer(Slots[findLastOccupied()].Storage); }
+    reference back() {
+        checkNotEmpty();
+        return *ObjectPoolDetail::getObjectPointer(Slots[findLastOccupied()].Storage);
+    }
 
-    const_reference back() const { return *ObjectPoolDetail::getObjectPointer(Slots[findLastOccupied()].Storage); }
+    const_reference back() const {
+        checkNotEmpty();
+        return *ObjectPoolDetail::getObjectPointer(Slots[findLastOccupied()].Storage);
+    }
 
     // ------------------------------------------------------------------ //
     // 迭代器。                                                            //
@@ -663,38 +673,19 @@ public:
     }
 
     // @brief 将被占用的槽位压实到前部并丢弃空闲槽位。
+    // @notice 强异常安全：先在临时池中压实，成功后整体交换；移动抛异常时原池
+    //         不变。压实会改变物理槽位下标，因此 getSlotIndex 得到的既有句柄
+    //         在本调用后失效。
     void shrinkToFit() {
-        if (LiveSize == 0) {
-            Slots.clear();
-            FreeSlots.clear();
-            resizeOccupied();
-            callShrinkToFit(Slots, ObjectPoolDetail::HasShrinkToFit<container_type>());
-            return;
-        }
-
         if (FreeSlots.empty()) {
             callShrinkToFit(Slots, ObjectPoolDetail::HasShrinkToFit<container_type>());
             return;
         }
-
-        size_type Write = 0;
-        for (size_type Read = 0; Read < Slots.size(); ++Read) {
-            if (!isOccupied(Read)) {
-                continue;
-            }
-            if (Read != Write) {
-                ObjectPoolDetail::constructInStorage(
-                    Slots[Write].Storage,
-                    std::move(*ObjectPoolDetail::getObjectPointer(Slots[Read].Storage)));
-                setOccupied(Write, true);
-                ObjectPoolDetail::destroyInStorage(Slots[Read].Storage);
-                setOccupied(Read, false);
-            }
-            ++Write;
-        }
-        Slots.resize(Write);
-        FreeSlots.clear();
-        resizeOccupied();
+        ObjectPool Temp(PoolAllocator);
+        Temp.reserve(LiveSize);
+        for (iterator It = begin(); It != end(); ++It)
+            Temp.emplaceBack(std::move(*It));
+        swap(Temp);
         callShrinkToFit(Slots, ObjectPoolDetail::HasShrinkToFit<container_type>());
     }
 
@@ -736,8 +727,9 @@ public:
     iterator append(const_reference Value) { return iterator(this, emplaceIntoFreeSlot(Value)); }
     iterator append(value_type&& Value) { return iterator(this, emplaceIntoFreeSlot(std::move(Value))); }
 
-    // @brief 删除最后一个有效元素。
+    // @brief 删除最后一个有效元素；空池抛 std::out_of_range。
     void popBack() {
+        checkNotEmpty();
         size_type Last = findLastOccupied();
         erase(const_iterator(this, Last));
     }
@@ -745,7 +737,9 @@ public:
     // @brief 删除单个元素（墓碑式，O(1)，不搬移）。
     // @param Pos 指向待删元素的迭代器
     // @return 指向被删元素之后下一个有效元素的迭代器
+    // @notice 无效迭代器（end()、空闲槽位、其它池）抛 std::out_of_range。
     iterator erase(const_iterator Pos) {
+        validateErase(Pos);
         size_type Index = Pos.Index;
         SlotType& SlotRef = Slots[Index];
         ObjectPoolDetail::destroyInStorage(SlotRef.Storage);
@@ -835,10 +829,23 @@ public:
         return Count;
     }
 
-    // @brief 交换内容与分配器（遵循 propagate_on_container_swap）。
-    void swap(ObjectPool &Other) noexcept {
+    // @brief 交换内容（分配器仅在 propagate_on_container_swap 为真时交换）。
+    void swap(ObjectPool &Other) { swapImpl(Other, PropagateOnSwap()); }
+
+    void swapImpl(ObjectPool &Other, std::true_type) {
         using std::swap;
         swap(PoolAllocator, Other.PoolAllocator);
+        swap(Slots, Other.Slots);
+        swap(Occupied, Other.Occupied);
+        swap(FreeSlots, Other.FreeSlots);
+        swap(LiveSize, Other.LiveSize);
+    }
+
+    // @notice 非传播分配器且不相等时，交换为未定义行为；此处抛异常以消除 UB。
+    void swapImpl(ObjectPool &Other, std::false_type) {
+        if (PoolAllocator != Other.PoolAllocator)
+            throw std::logic_error("ObjectPool::swap: 分配器不相等且不传播");
+        using std::swap;
         swap(Slots, Other.Slots);
         swap(Occupied, Other.Occupied);
         swap(FreeSlots, Other.FreeSlots);
@@ -853,8 +860,12 @@ public:
     // @brief 由物理槽位下标构造迭代器（用于按下标删除）。
     // @param Index 物理槽位下标
     // @return 指向该槽位的迭代器
-    // @notice Index 必须是有效的占用槽位下标（由 getSlotIndex/append 获得）。
-    iterator getIterator(size_type Index) { return iterator(this, Index); }
+    // @notice 越界或指向空闲槽位时抛 std::out_of_range。
+    iterator getIterator(size_type Index) {
+        if (Index >= Slots.size() || !isOccupied(Index))
+            throw std::out_of_range("ObjectPool::getIterator: 无效槽位下标");
+        return iterator(this, Index);
+    }
 
 private:
     // ------------------------------------------------------------------ //
@@ -1030,7 +1041,17 @@ private:
 
     void checkIndex(size_type Pos) const {
         if (Pos >= LiveSize)
-            throw std::out_of_range("ObjectPool::at: index out of range");
+            throw std::out_of_range("ObjectPool: index out of range");
+    }
+
+    void checkNotEmpty() const {
+        if (LiveSize == 0)
+            throw std::out_of_range("ObjectPool: 空池");
+    }
+
+    void validateErase(const_iterator Pos) const {
+        if (Pos.Owner != this || Pos.Index >= Slots.size() || !isOccupied(Pos.Index))
+            throw std::out_of_range("ObjectPool::erase: 无效迭代器");
     }
 
     template <typename C>
@@ -1122,6 +1143,10 @@ private:
         typename PoolTraits::propagate_on_container_copy_assignment;
     using PropagateOnMoveAssignment =
         typename PoolTraits::propagate_on_container_move_assignment;
+    using PropagateOnSwap =
+        typename PoolTraits::propagate_on_container_swap;
+    using IsAlwaysEqual =
+        typename PoolTraits::is_always_equal;
 
 public:
     // @notice 两种迭代器都持有可变链表迭代器：const 语义由 Owner 指针保证，
@@ -1346,7 +1371,7 @@ public:
 
     ObjectPool& operator=(ObjectPool&& Other)
         noexcept(PropagateOnMoveAssignment::value ||
-                 std::is_empty<Allocator>::value) {
+                 IsAlwaysEqual::value) {
         moveAssignImpl(std::move(Other), PropagateOnMoveAssignment());
         return *this;
     }
@@ -1359,15 +1384,19 @@ public:
     allocator_type get_allocator() const { return PoolAllocator; }
 
     reference front() {
+        checkNotEmpty();
         return *ObjectPoolDetail::getObjectPointer(findFirstOccupied()->Storage);
     }
     const_reference front() const {
+        checkNotEmpty();
         return *ObjectPoolDetail::getObjectPointer(findFirstOccupied()->Storage);
     }
     reference back() {
+        checkNotEmpty();
         return *ObjectPoolDetail::getObjectPointer(findLastOccupied()->Storage);
     }
     const_reference back() const {
+        checkNotEmpty();
         return *ObjectPoolDetail::getObjectPointer(findLastOccupied()->Storage);
     }
 
@@ -1471,10 +1500,13 @@ public:
     }
 
     void popBack() {
+        checkNotEmpty();
         erase(const_iterator(this, findLastOccupied()));
     }
 
+    // @notice 无效迭代器（end()、空闲槽位、其它池）抛 std::out_of_range。
     iterator erase(const_iterator Pos) {
+        validateErase(Pos);
         SlotIterator It = Pos.It;
         ObjectPoolDetail::destroyInStorage(It->Storage);
         It->IsOccupied = false;
@@ -1554,9 +1586,22 @@ public:
         return Count;
     }
 
-    void swap(ObjectPool& Other) {
+    // @brief 交换内容（分配器仅在 propagate_on_container_swap 为真时交换）。
+    void swap(ObjectPool& Other) { swapImpl(Other, PropagateOnSwap()); }
+
+    void swapImpl(ObjectPool& Other, std::true_type) {
         using std::swap;
         swap(PoolAllocator, Other.PoolAllocator);
+        swap(Slots, Other.Slots);
+        swap(FreeSlots, Other.FreeSlots);
+        swap(LiveSize, Other.LiveSize);
+    }
+
+    // @notice 非传播分配器且不相等时，交换为未定义行为；此处抛异常以消除 UB。
+    void swapImpl(ObjectPool& Other, std::false_type) {
+        if (PoolAllocator != Other.PoolAllocator)
+            throw std::logic_error("ObjectPool::swap: 分配器不相等且不传播");
+        using std::swap;
         swap(Slots, Other.Slots);
         swap(FreeSlots, Other.FreeSlots);
         swap(LiveSize, Other.LiveSize);
@@ -1672,6 +1717,16 @@ private:
     void markSlotFree(SlotIterator It) {
         It->IsOccupied = false;
         FreeSlots.push_back(It);
+    }
+
+    void checkNotEmpty() const {
+        if (LiveSize == 0)
+            throw std::out_of_range("ObjectPool: 空池");
+    }
+
+    void validateErase(const_iterator Pos) const {
+        if (Pos.Owner != this || Pos.It == endSlot() || !Pos.It->IsOccupied)
+            throw std::out_of_range("ObjectPool::erase: 无效迭代器");
     }
 
     // @notice 下面的 const 成员仅为了取得可变迭代器而对底层容器做 const_cast；
@@ -1912,43 +1967,46 @@ public:
         FreeCount = Capacity;
     }
 
+    // @notice Slot 的移动为标准（非破坏性）语义，因此默认移动后源对象内部
+    //         保持一致（槽位占用状态与 LiveSize/FreeCount 相符）。
     FixedObjectPool(FixedObjectPool const&) = default;
     FixedObjectPool(FixedObjectPool&&) = default;
     FixedObjectPool& operator=(FixedObjectPool const&) = default;
     FixedObjectPool& operator=(FixedObjectPool&&) = default;
 
     // @brief 带边界检查的元素访问，越界抛 std::out_of_range。
-    reference at(size_type Pos) {
-        checkIndex(Pos);
-        return (*this)[Pos];
-    }
-    const_reference at(size_type Pos) const {
-        checkIndex(Pos);
-        return (*this)[Pos];
-    }
+    reference at(size_type Pos) { return (*this)[Pos]; }
+    const_reference at(size_type Pos) const { return (*this)[Pos]; }
 
+    // @brief 元素访问（第 Pos 个有效元素）；越界抛 std::out_of_range。
+    // @notice 本 operator[] 做边界检查，避免越界 UB。
     reference operator[](size_type Pos) {
         return const_cast<reference>(
             static_cast<FixedObjectPool const&>(*this)[Pos]);
     }
     const_reference operator[](size_type Pos) const {
+        checkIndex(Pos);
         return *ObjectPoolDetail::getObjectPointer(
             Slots[findNthOccupied(Pos)].Storage);
     }
 
     reference front() {
+        checkNotEmpty();
         return *ObjectPoolDetail::getObjectPointer(
             Slots[findFirstOccupied()].Storage);
     }
     const_reference front() const {
+        checkNotEmpty();
         return *ObjectPoolDetail::getObjectPointer(
             Slots[findFirstOccupied()].Storage);
     }
     reference back() {
+        checkNotEmpty();
         return *ObjectPoolDetail::getObjectPointer(
             Slots[findLastOccupied()].Storage);
     }
     const_reference back() const {
+        checkNotEmpty();
         return *ObjectPoolDetail::getObjectPointer(
             Slots[findLastOccupied()].Storage);
     }
@@ -2039,11 +2097,14 @@ public:
     }
 
     void popBack() {
+        checkNotEmpty();
         erase(const_iterator(this, findLastOccupied()));
     }
 
     // @brief 删除单个元素（墓碑式，O(1)，不搬移）。
+    // @notice 无效迭代器（end()、空闲槽位、其它池）抛 std::out_of_range。
     iterator erase(const_iterator Pos) {
+        validateErase(Pos);
         size_type Index = Pos.Index;
         ObjectPoolDetail::destroyInStorage(Slots[Index].Storage);
         setOccupied(Index, false);
@@ -2079,7 +2140,12 @@ public:
     size_type getSlotIndex(const_iterator Pos) const { return Pos.Index; }
 
     // @brief 由物理槽位下标构造迭代器。
-    iterator getIterator(size_type Index) { return iterator(this, Index); }
+    // @notice 越界或指向空闲槽位时抛 std::out_of_range。
+    iterator getIterator(size_type Index) {
+        if (Index >= Capacity || !isOccupied(Index))
+            throw std::out_of_range("FixedObjectPool::getIterator: 无效槽位下标");
+        return iterator(this, Index);
+    }
 
 private:
     bool isOccupied(size_type Index) const {
@@ -2172,7 +2238,17 @@ private:
     }
     void checkIndex(size_type Pos) const {
         if (Pos >= LiveSize)
-            throw std::out_of_range("FixedObjectPool::at: index out of range");
+            throw std::out_of_range("FixedObjectPool: index out of range");
+    }
+
+    void checkNotEmpty() const {
+        if (LiveSize == 0)
+            throw std::out_of_range("FixedObjectPool: 空池");
+    }
+
+    void validateErase(const_iterator Pos) const {
+        if (Pos.Owner != this || Pos.Index >= Capacity || !isOccupied(Pos.Index))
+            throw std::out_of_range("FixedObjectPool::erase: 无效迭代器");
     }
 
     std::array<SlotType, Capacity> Slots;
