@@ -25,8 +25,7 @@
 /**
  * @brief 把文本写入文件(二进制模式, 不转换换行)。
  */
-[[nodiscard]] std::expected<void, IniError> writeIniFile(std::string_view FilePath,
-                                                         std::string_view Content);
+[[nodiscard]] std::expected<void, IniError> writeIniFile(std::string_view FilePath, std::string_view Content);
 
 /**
  * @brief 内存映射的文件视图 (RAII)。
@@ -58,13 +57,13 @@ private:
     void* Mapping = nullptr; // 文件映射对象
     void* File = nullptr;    // 文件句柄
 #elif defined(__unix__) || defined(__APPLE__)
-    const char* Data = nullptr;
-    int Fd = -1;
+    const char *Data = nullptr;
+    int Fd           = -1;
 #else
     std::string Owned; // 退化为普通读取: 内容由对象持有
 #endif
     std::size_t Size = 0;
-    bool Valid = false;
+    bool Valid       = false;
 
     friend std::expected<IniMappedFile, IniError> mapIniFile(std::string_view FilePath);
 };

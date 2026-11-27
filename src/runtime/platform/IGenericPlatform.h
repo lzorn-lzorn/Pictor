@@ -2,14 +2,10 @@
 
 #pragma once
 
-namespace pictor::platform
-{
-
+namespace pictor::platform{
 // Interface for platform-specific abstractions.
-class IGenericPlatform
-{
+class IGenericPlatform {
 public:
     virtual ~IGenericPlatform() = default;
 };
-
-}  // namespace pictor::platform
+} // namespace pictor::platform

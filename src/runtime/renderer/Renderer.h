@@ -10,26 +10,30 @@
 
 #include "Rhi.h"
 
-namespace pictor::render
-{
-
-class Renderer
-{
+namespace pictor::render{
+class Renderer {
 public:
-    Renderer(const std::string& Title, int Width, int Height);
+    Renderer(const std::string &Title, int Width, int Height);
+
     ~Renderer();
 
-    Renderer(const Renderer&) = delete;
-    Renderer& operator=(const Renderer&) = delete;
+    Renderer(const Renderer &) = delete;
+
+    Renderer &operator=(const Renderer &) = delete;
 
     // Returns false once the user has asked to close the window.
     bool pollEvents();
-    void drawFrame() { Rhi->drawFrame(); }
-    [[nodiscard]] std::uint64_t getFrameCount() const { return Rhi->getFrameCount(); }
+
+    void drawFrame() {
+        Rhi->drawFrame();
+    }
+
+    [[nodiscard]] std::uint64_t getFrameCount() const {
+        return Rhi->getFrameCount();
+    }
 
 private:
-    SDL_Window* Window = nullptr;
+    SDL_Window *Window = nullptr;
     std::optional<Rhi> Rhi;
 };
-
-}  // namespace pictor::render
+} // namespace pictor::render

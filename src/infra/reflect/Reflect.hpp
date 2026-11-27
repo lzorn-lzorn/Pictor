@@ -3,161 +3,147 @@
 #include <infra/reflect/ReflectObject.hpp>
 #include <infra/serde/SerdeReflect.hpp>
 #include <functional>
+#include <ranges>
 
-namespace infra
-{
-
+namespace infra{
 // ========================= 运行时反射：参数元组（去掉隐式 this） =========================
-template<typename Tuple> struct ReflectArgsTuple;
+template<typename Tuple>
+struct ReflectArgsTuple;
+
 template<typename First, typename... Rest>
-struct ReflectArgsTuple<std::tuple<First, Rest...>> { using type = std::tuple<Rest...>; };
+struct ReflectArgsTuple<std::tuple<First, Rest...> > {
+    using type = std::tuple<Rest...>;
+};
 
 template<typename Class, typename MemFn, typename Ret, typename... Args>
-SerdeADT invokeMemberImpl(Class &self, MemFn Fn, const SerdeADT &args, std::tuple<Args...> *)
-{
-    if (!args.isArray()) throw std::invalid_argument("invoke: arguments must be an array");
+SerdeADT invokeMemberImpl(Class &self, MemFn Fn, const SerdeADT &args, std::tuple<Args...> *) {
+    if (!args.isArray())
+        throw std::invalid_argument("invoke: arguments must be an array");
     const auto &Arr = args.asArray();
-    if (Arr.size() != sizeof...(Args)) throw std::invalid_argument("invoke: argument count mismatch");
+    if (Arr.size() != sizeof...(Args))
+        throw std::invalid_argument("invoke: argument count mismatch");
     return [&]<std::size_t... I>(std::index_sequence<I...>) -> SerdeADT {
-        if constexpr (std::is_void_v<Ret>)
-        {
-            (self.*Fn)(valueCast<std::remove_cvref_t<Args>>(Arr[I])...);
-            return SerdeADT{ nullptr };
+        if constexpr (std::is_void_v<Ret>) {
+            (self.*Fn)(valueCast<std::remove_cvref_t<Args> >(Arr[I])...);
+            return SerdeADT{nullptr};
         }
-        else
-        {
-            return toAdt((self.*Fn)(valueCast<std::remove_cvref_t<Args>>(Arr[I])...));
+        else {
+            return toAdt((self.*Fn)(valueCast<std::remove_cvref_t<Args> >(Arr[I])...));
         }
     }(std::index_sequence_for<Args...>{});
 }
 
 template<typename Class, typename MemFn>
-SerdeADT invokeMember(Class &self, MemFn Fn, const SerdeADT &args)
-{
+SerdeADT invokeMember(Class &self, MemFn Fn, const SerdeADT &args) {
     using Traits       = ReflectFunctionTraits<MemFn>;
     using ExplicitArgs = typename ReflectArgsTuple<typename Traits::ArgumentTypes>::type;
-    return invokeMemberImpl<Class, MemFn, typename Traits::ReturnType>(self, Fn, args, static_cast<ExplicitArgs *>(nullptr));
+    return invokeMemberImpl<Class, MemFn, typename Traits::ReturnType>(self,
+                                                                       Fn,
+                                                                       args,
+                                                                       static_cast<ExplicitArgs *>(nullptr));
 }
 
 // ========================= 运行时反射：全局注册表 =========================
-class ReflectRegistry
-{
+class ReflectRegistry {
 public:
     using Factory = std::function<ReflectObject(const SerdeADT &)>;
     using Invoker = std::function<SerdeADT(ReflectObject &, const SerdeADT &)>;
     using Getter  = std::function<SerdeADT(ReflectObject &)>;
     using Setter  = std::function<void(ReflectObject &, const SerdeADT &)>;
 
-    static ReflectRegistry &self()
-    {
+    static ReflectRegistry &self() {
         static ReflectRegistry Instance;
         return Instance;
     }
 
-    void registerEntry(std::string_view Name, Factory factory,
+    void registerEntry(std::string_view Name,
+                       Factory factory,
                        std::unordered_map<std::string, Invoker> invokers,
                        std::unordered_map<std::string, Getter> Getters,
                        std::unordered_map<std::string, Setter> Setters,
-                       std::string_view BaseName, bool HasBase)
-    {
-        const std::string Key{ Name };
+                       std::string_view BaseName,
+                       bool HasBase) {
+        const std::string Key{Name};
         Types.emplace(Key,
-                       Entry{ std::move(factory), std::move(invokers), std::move(Getters), std::move(Setters) });
-        if (HasBase)
-        {
-            BaseOf[Key] = std::string(BaseName);              // 类型名 -> 直接基类名
-            DerivedOf[std::string(BaseName)].push_back(Key);  // 基类名 -> 直接子类名
+                      Entry{std::move(factory), std::move(invokers), std::move(Getters), std::move(Setters)});
+        if (HasBase) {
+            BaseOf[Key] = std::string(BaseName);             // 类型名 -> 直接基类名
+            DerivedOf[std::string(BaseName)].push_back(Key); // 基类名 -> 直接子类名
         }
     }
 
-    [[nodiscard]] bool has(std::string_view Name) const
-    {
+    [[nodiscard]] bool has(std::string_view Name) const {
         return Types.find(std::string(Name)) != Types.end();
     }
 
     // 通过字符串构造对象
-    ReflectObject create(std::string_view Name) const
-    {
-        return create(Name, SerdeADT{ nullptr });
+    [[nodiscard]] ReflectObject create(std::string_view Name) const {
+        return create(Name, SerdeADT{nullptr});
     }
-    ReflectObject create(std::string_view Name, const SerdeADT &args) const
-    {
+
+    [[nodiscard]] ReflectObject create(std::string_view Name, const SerdeADT &args) const {
         auto it = Types.find(std::string(Name));
-        if (it == Types.end()) 
-        {
+        if (it == Types.end()) {
             throw std::invalid_argument("ReflectRegistry: unknown type '" + std::string(Name) + "'");
         }
         return it->second.Factory(args);
     }
 
     // 通过字符串调用成员方法
-    SerdeADT invoke(std::string_view type, std::string_view Fn, ReflectObject &Obj, const SerdeADT &args) const
-    {
+    SerdeADT invoke(std::string_view type, std::string_view Fn, ReflectObject &Obj, const SerdeADT &args) const {
         auto it = Types.find(std::string(type));
-        if (it == Types.end())
-        {
+        if (it == Types.end()) {
             throw std::invalid_argument("ReflectRegistry: unknown type '" + std::string(type) + "'");
         }
         auto fit = it->second.Invokers.find(std::string(Fn));
-        if (fit == it->second.Invokers.end()) 
-        {
+        if (fit == it->second.Invokers.end()) {
             throw std::invalid_argument("ReflectRegistry: unknown function '" + std::string(Fn) + "'");
         }
         return fit->second(Obj, args);
     }
 
     // 通过字符串访问成员, 读
-    SerdeADT get(std::string_view type, std::string_view Member, ReflectObject &Obj) const
-    {
+    SerdeADT get(std::string_view type, std::string_view Member, ReflectObject &Obj) const {
         auto it = Types.find(std::string(type));
-        if (it == Types.end()) 
-        {
+        if (it == Types.end()) {
             throw std::invalid_argument("ReflectRegistry: unknown type '" + std::string(type) + "'");
         }
         auto git = it->second.Getters.find(std::string(Member));
-        if (git == it->second.Getters.end()) 
-        {
+        if (git == it->second.Getters.end()) {
             throw std::invalid_argument("ReflectRegistry: unknown Member '" + std::string(Member) + "'");
         }
         return git->second(Obj);
     }
 
     // 通过字符串访问成员, 写
-    void set(std::string_view type, std::string_view Member, ReflectObject &Obj, const SerdeADT &Value) const
-    {
+    void set(std::string_view type, std::string_view Member, ReflectObject &Obj, const SerdeADT &Value) const {
         auto it = Types.find(std::string(type));
-        if (it == Types.end()) 
-        {
+        if (it == Types.end()) {
             throw std::invalid_argument("ReflectRegistry: unknown type '" + std::string(type) + "'");
         }
         auto sit = it->second.Setters.find(std::string(Member));
-        if (sit == it->second.Setters.end()) 
-        {
+        if (sit == it->second.Setters.end()) {
             throw std::invalid_argument("ReflectRegistry: unknown Member '" + std::string(Member) + "'");
         }
         sit->second(Obj, Value);
     }
 
     // ---- 继承信息查询 ----
-    [[nodiscard]] std::optional<std::string> baseOf(std::string_view Name) const
-    {
+    [[nodiscard]] std::optional<std::string> baseOf(std::string_view Name) const {
         auto It = BaseOf.find(std::string(Name));
-        return It == BaseOf.end() ? std::nullopt : std::optional<std::string>{ It->second };
+        return It == BaseOf.end() ? std::nullopt : std::optional<std::string>{It->second};
     }
 
-    [[nodiscard]] std::vector<std::string> derivedOf(std::string_view Name) const
-    {
+    [[nodiscard]] std::vector<std::string> derivedOf(std::string_view Name) const {
         auto It = DerivedOf.find(std::string(Name));
         return It == DerivedOf.end() ? std::vector<std::string>{} : It->second;
     }
 
     // 基类全链（自近及远，不含自身）
-    [[nodiscard]] std::vector<std::string> baseChainOf(std::string_view Name) const
-    {
+    [[nodiscard]] std::vector<std::string> baseChainOf(std::string_view Name) const {
         std::vector<std::string> Chain;
-        std::string Cur{ Name };
-        while (auto B = baseOf(Cur))
-        {
+        std::string Cur{Name};
+        while (auto B = baseOf(Cur)) {
             Chain.push_back(*B);
             Cur = *B;
         }
@@ -165,64 +151,71 @@ public:
     }
 
     // 是否（直接或间接）派生自 Base
-    [[nodiscard]] bool isDerivedFrom(std::string_view Name, std::string_view Base) const
-    {
-        std::string Cur{ Name };
-        while (auto B = baseOf(Cur))
-        {
-            if (*B == Base) return true;
+    [[nodiscard]] bool isDerivedFrom(std::string_view Name, std::string_view Base) const {
+        std::string Cur{Name};
+        while (auto B = baseOf(Cur)) {
+            if (*B == Base)
+                return true;
             Cur = *B;
         }
         return false;
     }
 
-    [[nodiscard]] std::vector<std::string> typeNames() const
-    {
+    [[nodiscard]] std::vector<std::string> typeNames() const {
         std::vector<std::string> Names;
         Names.reserve(Types.size());
-        for (const auto &[K, V] : Types) Names.push_back(K);
+        for (auto const &K: Types | std::views::keys)
+            Names.push_back(K);
         return Names;
     }
 
-    [[nodiscard]] std::size_t size() const noexcept { return Types.size(); }
+    [[nodiscard]] std::size_t size() const noexcept {
+        return Types.size();
+    }
 
 private:
-    struct Entry
-    {
+    struct Entry {
         Factory Factory;
         std::unordered_map<std::string, Invoker> Invokers;
         std::unordered_map<std::string, Getter> Getters;
         std::unordered_map<std::string, Setter> Setters;
     };
+
     std::unordered_map<std::string, Entry> Types;
     std::unordered_map<std::string, std::string> BaseOf;                  // 类型名 -> 直接基类名
-    std::unordered_map<std::string, std::vector<std::string>> DerivedOf;  // 基类名 -> 直接子类名
+    std::unordered_map<std::string, std::vector<std::string> > DerivedOf; // 基类名 -> 直接子类名
 };
 
 // ---- TypeInfo 的运行时继承查询实现（须在 ReflectRegistry 完整定义之后） ----
 template<typename Ty>
-std::vector<std::string> TypeInfo<Ty>::derivedNames() { return ReflectRegistry::self().derivedOf(Name); }
-template<typename Ty>
-std::vector<std::string> TypeInfo<Ty>::baseChain() { return ReflectRegistry::self().baseChainOf(Name); }
-template<typename Ty>
-bool TypeInfo<Ty>::isDerivedFrom(std::string_view Base) { return ReflectRegistry::self().isDerivedFrom(Name, Base); }
-
-// ========================= 由 TypeInfo<Ty> 生成工厂 / 调用表 / 成员表 =========================
-template<typename Ty>
-ReflectObject factory(const SerdeADT &args)
-{
-    if (args.isNull()) return ReflectObject{ Ty{} };
-    auto R = fromAdt<Ty>(args);
-    if (!R)
-    {
-        throw std::runtime_error(R.error());
-    }
-    return ReflectObject{ std::move(*R) };
+std::vector<std::string> TypeInfo<Ty>::derivedNames() {
+    return ReflectRegistry::self().derivedOf(Name);
 }
 
 template<typename Ty>
-std::unordered_map<std::string, ReflectRegistry::Invoker> buildInvokers()
-{
+std::vector<std::string> TypeInfo<Ty>::baseChain() {
+    return ReflectRegistry::self().baseChainOf(Name);
+}
+
+template<typename Ty>
+bool TypeInfo<Ty>::isDerivedFrom(std::string_view Base) {
+    return ReflectRegistry::self().isDerivedFrom(Name, Base);
+}
+
+// ========================= 由 TypeInfo<Ty> 生成工厂 / 调用表 / 成员表 =========================
+template<typename Ty>
+ReflectObject factory(const SerdeADT &args) {
+    if (args.isNull())
+        return ReflectObject{Ty{}};
+    auto R = fromAdt<Ty>(args);
+    if (!R) {
+        throw std::runtime_error(R.error());
+    }
+    return ReflectObject{std::move(*R)};
+}
+
+template<typename Ty>
+std::unordered_map<std::string, ReflectRegistry::Invoker> buildInvokers() {
     std::unordered_map<std::string, ReflectRegistry::Invoker> Invokers;
     TypeInfo<Ty>::forEachFunction([&Invokers](const auto &Field) {
         Invokers[std::string(Field.Name)] =
@@ -236,59 +229,62 @@ std::unordered_map<std::string, ReflectRegistry::Invoker> buildInvokers()
 template<typename Ty, typename FieldType>
 void addMemberField(std::unordered_map<std::string, ReflectRegistry::Getter> &Getters,
                     std::unordered_map<std::string, ReflectRegistry::Setter> &Setters,
-                    const FieldType &Field)
-{
-    auto Ptr = Field.Pointer;
+                    const FieldType &Field) {
+    auto Ptr                         = Field.Pointer;
     Getters[std::string(Field.Name)] = [Ptr](ReflectObject &Obj) -> SerdeADT {
         return toAdt(Obj.cast<Ty>().*Ptr);
     };
     Setters[std::string(Field.Name)] = [Ptr](ReflectObject &Obj, const SerdeADT &Value) {
         using FieldT = std::decay_t<decltype(Obj.cast<Ty>().*Ptr)>;
-        auto R = fromAdt<FieldT>(Value);
-        if (!R) throw std::runtime_error(R.error());
+        auto R       = fromAdt<FieldT>(Value);
+        if (!R)
+            throw std::runtime_error(R.error());
         Obj.cast<Ty>().*Ptr = std::move(*R);
     };
 }
 
 template<typename Ty, typename ReflectedType = Ty>
 void buildMembersInto(std::unordered_map<std::string, ReflectRegistry::Getter> &Getters,
-                      std::unordered_map<std::string, ReflectRegistry::Setter> &Setters)
-{
+                      std::unordered_map<std::string, ReflectRegistry::Setter> &Setters) {
     if constexpr (TypeInfo<ReflectedType>::HasBase)
         buildMembersInto<Ty, typename TypeInfo<ReflectedType>::Base>(Getters, Setters);
-    std::apply([&](auto &...Field) {
-        ((addMemberField<Ty>(Getters, Setters, Field)), ...);
-    }, TypeInfo<ReflectedType>::Variables);
+    std::apply([&](auto &... Field) {
+                   ((addMemberField<Ty>(Getters, Setters, Field)), ...);
+               },
+               TypeInfo<ReflectedType>::Variables);
 }
 
 template<typename Ty>
-void registerReflect()
-{
+void registerReflect() {
     constexpr std::string_view Name = TypeInfo<Ty>::Name;
-    if (ReflectRegistry::self().has(Name)) return; // 幂等：自动注册可能被多次触发（多 TU / 显式调用）
+    if (ReflectRegistry::self().has(Name))
+        return; // 幂等：自动注册可能被多次触发（多 TU / 显式调用）
 
     auto Invokers = buildInvokers<Ty>();
     std::unordered_map<std::string, ReflectRegistry::Getter> Getters;
     std::unordered_map<std::string, ReflectRegistry::Setter> Setters;
     buildMembersInto<Ty>(Getters, Setters);
-    ReflectRegistry::self().registerEntry(Name, &factory<Ty>,
-                                          std::move(Invokers), std::move(Getters), std::move(Setters),
-                                          TypeInfo<Ty>::BaseName, TypeInfo<Ty>::HasBase);
+    ReflectRegistry::self().registerEntry(Name,
+                                          &factory<Ty>,
+                                          std::move(Invokers),
+                                          std::move(Getters),
+                                          std::move(Setters),
+                                          TypeInfo<Ty>::BaseName,
+                                          TypeInfo<Ty>::HasBase);
 }
 
 // ========================= 自动注册 =========================
 // REFLECT_CLASS 展开出的 inline static 成员在本翻译单元的静态初始化阶段构造，
 // 其构造函数统一调用 registerReflect<Ty>()：无需为每个反射类型手写注册代码，
 // 且所有注册均在进入 main 之前完成。
-namespace detail
-{
-    template<typename Ty>
-    struct ReflectAutoRegistrar
-    {
-        ReflectAutoRegistrar() { registerReflect<Ty>(); }
-    };
+namespace detail{
+template<typename Ty>
+struct ReflectAutoRegistrar {
+    ReflectAutoRegistrar() {
+        registerReflect<Ty>();
+    }
+};
 }
-
 } // namespace infra
 
 // 全局别名：让用户写 REFLECT_CLASS(Person, ReflectNullBase) 时无需 infra:: 前缀
@@ -361,4 +357,3 @@ using ReflectNullBase = infra::ReflectNullBase;
 #define REFLECT_FUNCTIONS(...)                                \
     static constexpr auto reflect_functions =                 \
         std::make_tuple(__VA_OPT__(PP_MAP(REFLECT_FN_ENTRY, __VA_ARGS__)))
-

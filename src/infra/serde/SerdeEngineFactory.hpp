@@ -13,23 +13,22 @@
 #include <infra/serde/SerdeTomlEngine.hpp>
 #include <infra/serde/SerdeIniEngine.hpp>
 
-namespace infra
-{
-
-inline SerdeEngine *getEngineFor(ESerdeBackend Backend)
-{
+namespace infra{
+inline SerdeEngine *getEngineFor(ESerdeBackend Backend) {
     static SerdeJsonEngine JsonEngine;
     static SerdeTomlEngine TomlEngine;
     static SerdeIniEngine IniEngine;
-    switch (Backend)
-    {
-        case ESerdeBackend::Json: return &JsonEngine;
-        case ESerdeBackend::Toml: return &TomlEngine;
-        case ESerdeBackend::Ini:  return &IniEngine;
-        default:                  return nullptr;
+    switch (Backend) {
+        case ESerdeBackend::Json:
+            return &JsonEngine;
+        case ESerdeBackend::Toml:
+            return &TomlEngine;
+        case ESerdeBackend::Ini:
+            return &IniEngine;
+        default:
+            return nullptr;
     }
 }
-
 } // namespace infra
 
 #endif // INFRA_SERDE_ENGINE_FACTORY_HPP

@@ -27,50 +27,40 @@
 #include <infra/serde/SerdeEngine.hpp>
 #include <infra/serde/parser/Ini.hpp>
 
-namespace infra
-{
-
+namespace infra{
 // ========================= INI 后端 =========================
-class SerdeIniEngine : public SerdeEngine
-{
+class SerdeIniEngine : public SerdeEngine {
 public:
-    SerdeADT parse(std::string_view Text) const override
-    {
+    SerdeADT parse(std::string_view Text) const override {
         // 与 serialize 对称的宽容策略: 点分键(sub.key)与任意 Section 名均可读回
         IniPolicy Policy;
         Policy.AllowAnySectionName = true;
-        Policy.KeyNameValidation = false;
-        Policy.ForbiddenKeyChars = "";
+        Policy.KeyNameValidation   = false;
+        Policy.ForbiddenKeyChars   = "";
         ::Ini Doc(Policy);
 
-        if (const std::expected<void, IniError> Parsed = Doc.parse(Text); !Parsed)
-        {
+        if (const std::expected<void, IniError> Parsed = Doc.parse(Text); !Parsed) {
             throw std::runtime_error("INI parse error: " + IniError::asString(Parsed.error()));
         }
 
         SerdeObject Root;
-        for (const std::string& Name : Doc.sections())
-        {
-            const IniSection* Sec = Doc.section(Name);
-            if (Sec == nullptr)
-            {
+        for (const std::string &Name: Doc.sections()) {
+            const IniSection *Sec = Doc.section(Name);
+            if (Sec == nullptr) {
                 continue;
             }
             SerdeObject Obj;
-            for (const IniEntry& Entry : Sec->Entries)
-            {
+            for (const IniEntry &Entry: Sec->Entries) {
                 // 序列化时的点分键(sub.key)在此展开回嵌套对象
                 insertDotted(Obj, Entry.Key, variantToAdt(Entry.Value));
             }
-            Root.emplace_back(Name, SerdeADT{ std::move(Obj) });
+            Root.emplace_back(Name, SerdeADT{std::move(Obj)});
         }
-        return SerdeADT{ std::move(Root) };
+        return SerdeADT{std::move(Root)};
     }
 
-    std::string serialize(const SerdeADT &Adt) const override
-    {
-        if (!Adt.isObject())
-        {
+    std::string serialize(const SerdeADT &Adt) const override {
+        if (!Adt.isObject()) {
             throw std::runtime_error("INI serialize: root must be an object of sections");
         }
 
@@ -78,20 +68,17 @@ public:
         // 键名不做标识符校验(注意: 含特殊字符的键名无法被 Ini 解析回读)
         IniPolicy Policy;
         Policy.AllowAnySectionName = true;
-        Policy.KeyNameValidation = false;
-        Policy.ForbiddenKeyChars = "";
+        Policy.KeyNameValidation   = false;
+        Policy.ForbiddenKeyChars   = "";
         ::Ini Doc(Policy);
 
-        for (const auto& [SectionName, SectionValue] : Adt.asObject())
-        {
-            if (!SectionValue.isObject())
-            {
+        for (const auto &[SectionName, SectionValue]: Adt.asObject()) {
+            if (!SectionValue.isObject()) {
                 // 根级标量/数组 -> 放入默认 Section
                 putEntry(Doc, std::string(Policy.DefaultSectionName), SectionName, SectionValue);
                 continue;
             }
-            for (const auto& [Key, Value] : SectionValue.asObject())
-            {
+            for (const auto &[Key, Value]: SectionValue.asObject()) {
                 putEntry(Doc, SectionName, Key, Value);
             }
         }
@@ -100,15 +87,11 @@ public:
 
 private:
     /** @brief 把点分键 sub.key 展开为嵌套对象(覆盖已有值)。 */
-    static void insertDotted(SerdeObject& Obj, std::string_view Key, SerdeADT Value)
-    {
+    static void insertDotted(SerdeObject &Obj, std::string_view Key, SerdeADT Value) {
         const std::size_t Dot = Key.find('.');
-        if (Dot == std::string_view::npos)
-        {
-            for (auto& [K, V] : Obj)
-            {
-                if (K == Key)
-                {
+        if (Dot == std::string_view::npos) {
+            for (auto &[K, V]: Obj) {
+                if (K == Key) {
                     V = std::move(Value);
                     return;
                 }
@@ -119,13 +102,10 @@ private:
 
         const std::string Head(Key.substr(0, Dot));
         const std::string_view Tail = Key.substr(Dot + 1);
-        for (auto& [K, V] : Obj)
-        {
-            if (K == Head)
-            {
-                if (!V.isObject())
-                {
-                    V = SerdeADT{ SerdeObject{} };
+        for (auto &[K, V]: Obj) {
+            if (K == Head) {
+                if (!V.isObject()) {
+                    V = SerdeADT{SerdeObject{}};
                 }
                 insertDotted(V.asObject(), Tail, std::move(Value));
                 return;
@@ -133,105 +113,99 @@ private:
         }
         SerdeObject Sub;
         insertDotted(Sub, Tail, std::move(Value));
-        Obj.emplace_back(Head, SerdeADT{ std::move(Sub) });
+        Obj.emplace_back(Head, SerdeADT{std::move(Sub)});
     }
 
-    static SerdeADT variantToAdt(const IniVariant& V)
-    {
+    static SerdeADT variantToAdt(const IniVariant &V) {
         return std::visit(
-            [](const auto& Arg) -> SerdeADT
-            {
-                using T = std::decay_t<decltype(Arg)>;
-                if constexpr (std::is_same_v<T, IniStringList>)
-                {
-                    // 列表元素推断类型, 保证 vector<int>/vector<double> 可往返
-                    SerdeArray Arr;
-                    for (const std::string& Element : Arg)
-                    {
-                        if (std::int64_t Int = 0; ini_detail::tryParseInt(Element, Int))
-                        {
-                            Arr.emplace_back(Int);
-                        }
-                        else if (double Double = 0.0; ini_detail::tryParseDouble(Element, Double))
-                        {
-                            Arr.emplace_back(Double);
-                        }
-                        else
-                        {
-                            Arr.emplace_back(Element);
-                        }
-                    }
-                    return SerdeADT{ std::move(Arr) };
-                }
-                else
-                {
-                    return SerdeADT{ Arg }; // bool / int64_t / double / string
-                }
-            },
-            V);
+                          [](const auto &Arg) -> SerdeADT {
+                              using T = std::decay_t<decltype(Arg)>;
+                              if constexpr (std::is_same_v<T, IniStringList>) {
+                                  // 列表元素推断类型, 保证 vector<int>/vector<double> 可往返
+                                  SerdeArray Arr;
+                                  for (const std::string &Element: Arg) {
+                                      if (std::int64_t Int = 0; ini_detail::tryParseInt(Element, Int)) {
+                                          Arr.emplace_back(Int);
+                                      }
+                                      else if (double Double = 0.0; ini_detail::tryParseDouble(Element, Double)) {
+                                          Arr.emplace_back(Double);
+                                      }
+                                      else {
+                                          Arr.emplace_back(Element);
+                                      }
+                                  }
+                                  return SerdeADT{std::move(Arr)};
+                              }
+                              else {
+                                  return SerdeADT{Arg}; // bool / int64_t / double / string
+                              }
+                          },
+                          V);
     }
 
-    static void putEntry(::Ini& Doc, const std::string& SectionName, const std::string& Key,
-                         const SerdeADT& Value)
-    {
-        if (Value.isObject())
-        {
+    static void putEntry(::Ini &Doc,
+                         const std::string &SectionName,
+                         const std::string &Key,
+                         const SerdeADT &Value) {
+        if (Value.isObject()) {
             // 嵌套对象 -> 点分键
-            for (const auto& [SubKey, SubValue] : Value.asObject())
-            {
+            for (const auto &[SubKey, SubValue]: Value.asObject()) {
                 putEntry(Doc, SectionName, Key + "." + SubKey, SubValue);
             }
             return;
         }
 
         std::expected<void, IniError> Result;
-        if (Value.isNull())         Result = Doc.set(SectionName, Key, "");
-        else if (Value.isBool())    Result = Doc.set(SectionName, Key, Value.asBool());
-        else if (Value.isInt())     Result = Doc.set(SectionName, Key, Value.asInt());
-        else if (Value.isUint())    Result = Doc.set(SectionName, Key, Value.asUint());
-        else if (Value.isDouble())  Result = Doc.set(SectionName, Key, Value.asDouble());
-        else if (Value.isString())  Result = Doc.set(SectionName, Key, Value.asString());
-        else if (Value.isArray())
-        {
+        if (Value.isNull())
+            Result = Doc.set(SectionName, Key, "");
+        else if (Value.isBool())
+            Result = Doc.set(SectionName, Key, Value.asBool());
+        else if (Value.isInt())
+            Result = Doc.set(SectionName, Key, Value.asInt());
+        else if (Value.isUint())
+            Result = Doc.set(SectionName, Key, Value.asUint());
+        else if (Value.isDouble())
+            Result = Doc.set(SectionName, Key, Value.asDouble());
+        else if (Value.isString())
+            Result = Doc.set(SectionName, Key, Value.asString());
+        else if (Value.isArray()) {
             std::vector<std::string> List;
-            for (const SerdeADT& Element : Value.asArray())
-            {
-                if (Element.isObject())
-                {
+            for (const SerdeADT &Element: Value.asArray()) {
+                if (Element.isObject()) {
                     throw std::runtime_error("INI serialize: array of objects is not supported");
                 }
                 List.push_back(adtToText(Element));
             }
             Result = Doc.set(SectionName, Key, List);
         }
-        else
-        {
+        else {
             throw std::runtime_error("INI serialize: binary/datetime values are not supported by INI");
         }
 
-        if (!Result)
-        {
+        if (!Result) {
             throw std::runtime_error("INI serialize: " + IniError::asString(Result.error()));
         }
     }
 
-    static std::string adtToText(const SerdeADT& V)
-    {
-        if (V.isString()) return V.asString();
-        if (V.isBool())   return V.asBool() ? "true" : "false";
-        if (V.isInt())    return std::to_string(V.asInt());
-        if (V.isUint())   return std::to_string(V.asUint());
-        if (V.isDouble())
-        {
+    static std::string adtToText(const SerdeADT &V) {
+        if (V.isString())
+            return V.asString();
+        if (V.isBool())
+            return V.asBool() ? "true" : "false";
+        if (V.isInt())
+            return std::to_string(V.asInt());
+        if (V.isUint())
+            return std::to_string(V.asUint());
+        if (V.isDouble()) {
             char Buffer[64];
             const std::to_chars_result Result = std::to_chars(Buffer, Buffer + sizeof(Buffer), V.asDouble());
             return std::string(Buffer, Result.ptr);
         }
-        if (V.isNull()) return "";
+        if (V.isNull())
+            return "";
         throw std::runtime_error("INI serialize: unsupported array element");
     }
 };
-
 } // namespace infra
 
 #endif // INFRA_SERDE_INI_ENGINE_HPP

@@ -51,17 +51,14 @@
 #ifdef min
 #undef min
 #endif
-namespace Bm
-{
-
+namespace Bm{
 using Clock = std::chrono::high_resolution_clock;
 
 /**
  * @brief 序列化到 JSON 时使用的时长单位。
  * @notice 时长始终在内部以纳秒累计，仅在输出时换算。
  */
-enum class ETimeUnit
-{
+enum class ETimeUnit {
     Hour,
     Minute,
     Second,
@@ -74,8 +71,7 @@ enum class ETimeUnit
 /**
  * @brief 迭代基准的配置项。
  */
-struct BenchmarkOptions
-{
+struct BenchmarkOptions {
     // @brief 迭代次数；0 表示自动校准，使总耗时接近 TargetTotalNanoseconds。
     std::int64_t Iterations = 0;
 
@@ -100,18 +96,17 @@ struct BenchmarkOptions
 /**
  * @brief 单个基准的测量结果。
  */
-struct BenchmarkResult
-{
+struct BenchmarkResult {
     std::string Name;
-    std::int64_t Iterations = 0;
+    std::int64_t Iterations           = 0;
     std::int64_t TotalTimeNanoseconds = 0;
-    double MeanTimeNanoseconds = 0.0;
-    double ThroughputOpsPerSecond = 0.0;
+    double MeanTimeNanoseconds        = 0.0;
+    double ThroughputOpsPerSecond     = 0.0;
 
     // @brief 仅在 ShouldMeasureIndividualTimes 开启时被填充。
-    bool HasDistribution = false;
-    double MinTimeNanoseconds = 0.0;
-    double MaxTimeNanoseconds = 0.0;
+    bool HasDistribution         = false;
+    double MinTimeNanoseconds    = 0.0;
+    double MaxTimeNanoseconds    = 0.0;
     double MedianTimeNanoseconds = 0.0;
     double StddevTimeNanoseconds = 0.0;
 };
@@ -119,11 +114,8 @@ struct BenchmarkResult
 // @brief 供 Detail::BenchmarkRegistrar 使用的前置声明。
 void registerBenchmark(std::string Name, std::function<void()> Function);
 
-namespace Detail
-{
-
-struct BenchmarkEntry
-{
+namespace Detail{
+struct BenchmarkEntry {
     std::string Name;
     std::function<void()> Function;
 };
@@ -133,8 +125,7 @@ struct BenchmarkEntry
  * @return 注册表引用。
  * @notice 函数内 static，首次使用时安全初始化，与各翻译单元的静态初始化顺序无关。
  */
-inline std::vector<BenchmarkEntry>& getRegistry()
-{
+inline std::vector<BenchmarkEntry> &getRegistry() {
     static std::vector<BenchmarkEntry> Registry;
     return Registry;
 }
@@ -143,8 +134,7 @@ inline std::vector<BenchmarkEntry>& getRegistry()
  * @brief 返回当前时间点。
  * @return 当前 Clock::time_point。
  */
-inline Clock::time_point getTimePoint()
-{
+inline Clock::time_point getTimePoint() {
     return Clock::now();
 }
 
@@ -153,8 +143,7 @@ inline Clock::time_point getTimePoint()
  * @param Time 时间点。
  * @return epoch 纳秒数。
  */
-inline std::int64_t getEpochNanoseconds(Clock::time_point Time)
-{
+inline std::int64_t getEpochNanoseconds(Clock::time_point Time) {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(Time.time_since_epoch()).count();
 }
 
@@ -164,8 +153,7 @@ inline std::int64_t getEpochNanoseconds(Clock::time_point Time)
  * @param End 结束时间点。
  * @return 两者之间的纳秒数。
  */
-inline std::int64_t getNanosecondsBetween(Clock::time_point Start, Clock::time_point End)
-{
+inline std::int64_t getNanosecondsBetween(Clock::time_point Start, Clock::time_point End) {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(End - Start).count();
 }
 
@@ -174,10 +162,8 @@ inline std::int64_t getNanosecondsBetween(Clock::time_point Start, Clock::time_p
  * @param Value 待格式化的值。
  * @return 格式化后的字符串。
  */
-inline std::string formatDouble(double Value)
-{
-    if (Value == 0.0)
-    {
+inline std::string formatDouble(double Value) {
+    if (Value == 0.0) {
         return "0";
     }
 
@@ -186,14 +172,11 @@ inline std::string formatDouble(double Value)
     Stream << std::fixed << std::setprecision(9) << Value;
     std::string Text = Stream.str();
 
-    if (Text.find('.') != std::string::npos)
-    {
-        while (!Text.empty() && Text.back() == '0')
-        {
+    if (Text.find('.') != std::string::npos) {
+        while (!Text.empty() && Text.back() == '0') {
             Text.pop_back();
         }
-        if (!Text.empty() && Text.back() == '.')
-        {
+        if (!Text.empty() && Text.back() == '.') {
             Text.pop_back();
         }
     }
@@ -205,32 +188,41 @@ inline std::string formatDouble(double Value)
  * @param Value 待转义的字符串。
  * @return 转义后的字符串。
  */
-inline std::string escapeJson(const std::string& Value)
-{
+inline std::string escapeJson(const std::string &Value) {
     std::string Result;
     Result.reserve(Value.size());
 
-    for (char Character : Value)
-    {
-        switch (Character)
-        {
-            case '"':  Result += "\\\""; break;
-            case '\\': Result += "\\\\"; break;
-            case '\b': Result += "\\b"; break;
-            case '\f': Result += "\\f"; break;
-            case '\n': Result += "\\n"; break;
-            case '\r': Result += "\\r"; break;
-            case '\t': Result += "\\t"; break;
+    for (char Character: Value) {
+        switch (Character) {
+            case '"':
+                Result += "\\\"";
+                break;
+            case '\\':
+                Result += "\\\\";
+                break;
+            case '\b':
+                Result += "\\b";
+                break;
+            case '\f':
+                Result += "\\f";
+                break;
+            case '\n':
+                Result += "\\n";
+                break;
+            case '\r':
+                Result += "\\r";
+                break;
+            case '\t':
+                Result += "\\t";
+                break;
             default:
-                if (static_cast<unsigned char>(Character) < 0x20)
-                {
+                if (static_cast<unsigned char>(Character) < 0x20) {
                     std::ostringstream Stream;
                     Stream << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-                           << static_cast<unsigned int>(static_cast<unsigned char>(Character));
+                        << static_cast<unsigned int>(static_cast<unsigned char>(Character));
                     Result += Stream.str();
                 }
-                else
-                {
+                else {
                     Result += Character;
                 }
         }
@@ -243,8 +235,7 @@ inline std::string escapeJson(const std::string& Value)
  * @brief 极简的 JSON 写出器，支持缩进。
  * @notice 采用“尾随逗号 + 关闭容器时去除”策略，稳定生成合法 JSON；所有输出模块共享它。
  */
-class JsonWriter
-{
+class JsonWriter {
 public:
     /**
      * @brief 构造。
@@ -252,109 +243,92 @@ public:
      * @param IndentSize 每层缩进空格数。
      */
     explicit JsonWriter(bool Pretty = true, int IndentSize = 2)
-        : Pretty(Pretty)
-        , IndentSize(IndentSize)
-    {
+        : Pretty(Pretty),
+          IndentSize(IndentSize) {
     }
 
-    void beginObject()
-    {
+    void beginObject() {
         writeValueStart();
         Out += '{';
         Stack.push_back(Frame());
     }
 
-    void endObject()
-    {
+    void endObject() {
         endContainer('}');
     }
 
-    void beginArray()
-    {
+    void beginArray() {
         writeValueStart();
         Out += '[';
         Stack.push_back(Frame());
     }
 
-    void endArray()
-    {
+    void endArray() {
         endContainer(']');
     }
 
-    void writeKey(const std::string& Key)
-    {
+    void writeKey(const std::string &Key) {
         writeNewlineAndIndent();
-        Out += '"' + escapeJson(Key) + "\": ";
+        Out      += '"' + escapeJson(Key) + "\": ";
         AfterKey = true;
     }
 
-    void writeString(const std::string& Value)
-    {
+    void writeString(const std::string &Value) {
         writeValueStart();
         Out += '"' + escapeJson(Value) + '"';
         writeValueEnd();
     }
 
-    void writeInt(std::int64_t Value)
-    {
+    void writeInt(std::int64_t Value) {
         writeValueStart();
         Out += std::to_string(Value);
         writeValueEnd();
     }
 
-    void writeDouble(double Value)
-    {
+    void writeDouble(double Value) {
         writeValueStart();
         Out += formatDouble(Value);
         writeValueEnd();
     }
 
-    void writeBool(bool Value)
-    {
+    void writeBool(bool Value) {
         writeValueStart();
         Out += Value ? "true" : "false";
         writeValueEnd();
     }
 
-    void writeNull()
-    {
+    void writeNull() {
         writeValueStart();
         Out += "null";
         writeValueEnd();
     }
 
-    void writeRaw(const std::string& Raw)
-    {
+    void writeRaw(const std::string &Raw) {
         writeValueStart();
         Out += Raw;
         writeValueEnd();
     }
 
-    std::string toString() const
-    {
+    std::string toString() const {
         return Out;
     }
 
 private:
-    struct Frame
-    {
-        bool HasElement = false;
+    struct Frame {
+        bool HasElement      = false;
         std::size_t CommaPos = 0;
     };
 
     /**
      * @brief 值写入前的准备：处理缩进并标记当前容器已有元素。
      */
-    void writeValueStart()
-    {
-        if (!AfterKey)
-        {
+    void writeValueStart() {
+        if (!AfterKey) {
             writeNewlineAndIndent();
         }
         AfterKey = false;
 
-        if (!Stack.empty())
-        {
+        if (!Stack.empty()) {
             Stack.back().HasElement = true;
         }
     }
@@ -362,11 +336,9 @@ private:
     /**
      * @brief 值写入后追加尾随逗号并记录其位置。
      */
-    void writeValueEnd()
-    {
-        if (!Stack.empty())
-        {
-            Out += ',';
+    void writeValueEnd() {
+        if (!Stack.empty()) {
+            Out                   += ',';
             Stack.back().CommaPos = Out.size() - 1;
         }
     }
@@ -375,18 +347,15 @@ private:
      * @brief 结束容器：去除最后一个尾随逗号后写入闭合符。
      * @param Closing 闭合字符('}' 或 ']')。
      */
-    void endContainer(char Closing)
-    {
-        if (!Stack.empty() && Stack.back().HasElement)
-        {
+    void endContainer(char Closing) {
+        if (!Stack.empty() && Stack.back().HasElement) {
             Out.erase(Stack.back().CommaPos, 1);
         }
         Stack.pop_back();
         writeNewlineAndIndent();
         Out += Closing;
 
-        if (!Stack.empty())
-        {
+        if (!Stack.empty()) {
             writeValueEnd();
         }
     }
@@ -394,10 +363,8 @@ private:
     /**
      * @brief 写出换行与缩进。
      */
-    void writeNewlineAndIndent()
-    {
-        if (Pretty && !Out.empty())
-        {
+    void writeNewlineAndIndent() {
+        if (Pretty && !Out.empty()) {
             Out += '\n';
             Out.append(static_cast<std::size_t>(Stack.size() * IndentSize), ' ');
         }
@@ -417,15 +384,18 @@ private:
  * @param Unit 时间单位。
  * @return 单位名称字符串。
  */
-inline const char* getTimeUnitName(ETimeUnit Unit)
-{
-    switch (Unit)
-    {
-        case ETimeUnit::Hour:        return "hour";
-        case ETimeUnit::Minute:      return "min";
-        case ETimeUnit::Second:      return "second";
-        case ETimeUnit::Millisecond: return "ms";
-        case ETimeUnit::Nanosecond:  return "ns";
+inline const char *getTimeUnitName(ETimeUnit Unit) {
+    switch (Unit) {
+        case ETimeUnit::Hour:
+            return "hour";
+        case ETimeUnit::Minute:
+            return "min";
+        case ETimeUnit::Second:
+            return "second";
+        case ETimeUnit::Millisecond:
+            return "ms";
+        case ETimeUnit::Nanosecond:
+            return "ns";
     }
     return "ms";
 }
@@ -435,15 +405,18 @@ inline const char* getTimeUnitName(ETimeUnit Unit)
  * @param Unit 时间单位。
  * @return 该单位包含的纳秒数。
  */
-inline double getNanosecondsPerUnit(ETimeUnit Unit)
-{
-    switch (Unit)
-    {
-        case ETimeUnit::Hour:        return 3.6e12;
-        case ETimeUnit::Minute:      return 6.0e10;
-        case ETimeUnit::Second:      return 1.0e9;
-        case ETimeUnit::Millisecond: return 1.0e6;
-        case ETimeUnit::Nanosecond:  return 1.0;
+inline double getNanosecondsPerUnit(ETimeUnit Unit) {
+    switch (Unit) {
+        case ETimeUnit::Hour:
+            return 3.6e12;
+        case ETimeUnit::Minute:
+            return 6.0e10;
+        case ETimeUnit::Second:
+            return 1.0e9;
+        case ETimeUnit::Millisecond:
+            return 1.0e6;
+        case ETimeUnit::Nanosecond:
+            return 1.0;
     }
     return 1.0e6;
 }
@@ -454,8 +427,7 @@ inline double getNanosecondsPerUnit(ETimeUnit Unit)
  * @param Unit 目标单位。
  * @return 换算后的值。
  */
-inline double convertNanoseconds(std::int64_t Nanoseconds, ETimeUnit Unit)
-{
+inline double convertNanoseconds(std::int64_t Nanoseconds, ETimeUnit Unit) {
     return static_cast<double>(Nanoseconds) / getNanosecondsPerUnit(Unit);
 }
 
@@ -465,8 +437,7 @@ inline double convertNanoseconds(std::int64_t Nanoseconds, ETimeUnit Unit)
  * @param Unit 目标单位。
  * @return 换算后的值。
  */
-inline double convertNanoseconds(double Nanoseconds, ETimeUnit Unit)
-{
+inline double convertNanoseconds(double Nanoseconds, ETimeUnit Unit) {
     return Nanoseconds / getNanosecondsPerUnit(Unit);
 }
 
@@ -476,8 +447,7 @@ inline double convertNanoseconds(double Nanoseconds, ETimeUnit Unit)
  * @param Unit 目标单位。
  * @return 格式化后的字符串。
  */
-inline std::string formatNanoseconds(std::int64_t Nanoseconds, ETimeUnit Unit)
-{
+inline std::string formatNanoseconds(std::int64_t Nanoseconds, ETimeUnit Unit) {
     return formatDouble(convertNanoseconds(Nanoseconds, Unit));
 }
 
@@ -487,22 +457,18 @@ inline std::string formatNanoseconds(std::int64_t Nanoseconds, ETimeUnit Unit)
  * @param Unit 目标单位。
  * @return 格式化后的字符串。
  */
-inline std::string formatNanoseconds(double Nanoseconds, ETimeUnit Unit)
-{
+inline std::string formatNanoseconds(double Nanoseconds, ETimeUnit Unit) {
     return formatDouble(convertNanoseconds(Nanoseconds, Unit));
 }
 
 /**
  * @brief 由 BENCHMARK / BENCHMARK_NAME 宏在静态初始化时构造，完成注册。
  */
-struct BenchmarkRegistrar
-{
-    BenchmarkRegistrar(std::string Name, std::function<void()> Function)
-    {
+struct BenchmarkRegistrar {
+    BenchmarkRegistrar(std::string Name, std::function<void()> Function) {
         registerBenchmark(std::move(Name), std::move(Function));
     }
 };
-
 } // namespace Detail
 
 /**
@@ -511,14 +477,11 @@ struct BenchmarkRegistrar
  * @param Function 待测量的 void() 函数。
  * @notice 同名注册会被忽略，因此被多个翻译单元包含的基准头只会注册一次。
  */
-inline void registerBenchmark(std::string Name, std::function<void()> Function)
-{
-    std::vector<Detail::BenchmarkEntry>& Registry = Detail::getRegistry();
+inline void registerBenchmark(std::string Name, std::function<void()> Function) {
+    std::vector<Detail::BenchmarkEntry> &Registry = Detail::getRegistry();
 
-    for (const Detail::BenchmarkEntry& Entry : Registry)
-    {
-        if (Entry.Name == Name)
-        {
+    for (const Detail::BenchmarkEntry &Entry: Registry) {
+        if (Entry.Name == Name) {
             return;
         }
     }
@@ -532,28 +495,24 @@ inline void registerBenchmark(std::string Name, std::function<void()> Function)
  * @param Options 配置项。
  * @return 该基准的测量结果。
  */
-inline BenchmarkResult runOne(const Detail::BenchmarkEntry& Entry, const BenchmarkOptions& Options)
-{
+inline BenchmarkResult runOne(const Detail::BenchmarkEntry &Entry, const BenchmarkOptions &Options) {
     BenchmarkResult Result;
     Result.Name = Entry.Name;
 
     // @brief 预热(通常用于预热缓存 / 分支预测)。
-    for (std::int64_t Index = 0; Index < Options.WarmupIterations; ++Index)
-    {
+    for (std::int64_t Index = 0; Index < Options.WarmupIterations; ++Index) {
         Entry.Function();
     }
 
     // @brief 确定迭代次数，需要时进行自动校准。
     std::int64_t Iterations = Options.Iterations;
-    if (Iterations <= 0)
-    {
+    if (Iterations <= 0) {
         const Clock::time_point CalibrationStart = Detail::getTimePoint();
         Entry.Function();
         const Clock::time_point CalibrationEnd = Detail::getTimePoint();
 
         std::int64_t SingleCallNanoseconds = Detail::getNanosecondsBetween(CalibrationStart, CalibrationEnd);
-        if (SingleCallNanoseconds <= 0)
-        {
+        if (SingleCallNanoseconds <= 0) {
             SingleCallNanoseconds = 1;
         }
 
@@ -561,75 +520,67 @@ inline BenchmarkResult runOne(const Detail::BenchmarkEntry& Entry, const Benchma
         Iterations = (std::max)(Iterations, Options.MinIterations);
         Iterations = (std::min)(Iterations, Options.MaxIterations);
     }
-    if (Iterations <= 0)
-    {
+    if (Iterations <= 0) {
         Iterations = 1;
     }
     Result.Iterations = Iterations;
 
     std::vector<double> PerIterationTimes;
-    if (Options.ShouldMeasureIndividualTimes)
-    {
+    if (Options.ShouldMeasureIndividualTimes) {
         PerIterationTimes.reserve(
-            static_cast<std::size_t>((std::min)(Iterations, static_cast<std::int64_t>(1LL << 20))));
+                                  static_cast<std::size_t>((
+                                      std::min)(Iterations, static_cast<std::int64_t>(1LL << 20))));
     }
 
     const Clock::time_point Start = Detail::getTimePoint();
-    for (std::int64_t Index = 0; Index < Iterations; ++Index)
-    {
-        if (Options.ShouldMeasureIndividualTimes)
-        {
+    for (std::int64_t Index = 0; Index < Iterations; ++Index) {
+        if (Options.ShouldMeasureIndividualTimes) {
             const Clock::time_point IterationStart = Detail::getTimePoint();
             Entry.Function();
             const Clock::time_point IterationEnd = Detail::getTimePoint();
             PerIterationTimes.push_back(
-                static_cast<double>(Detail::getNanosecondsBetween(IterationStart, IterationEnd)));
+                                        static_cast<double>(
+                                            Detail::getNanosecondsBetween(IterationStart, IterationEnd)));
         }
-        else
-        {
+        else {
             Entry.Function();
         }
     }
     const Clock::time_point End = Detail::getTimePoint();
 
     Result.TotalTimeNanoseconds = Detail::getNanosecondsBetween(Start, End);
-    const double TotalSeconds = static_cast<double>(Result.TotalTimeNanoseconds) / 1e9;
-    Result.MeanTimeNanoseconds =
+    const double TotalSeconds   = static_cast<double>(Result.TotalTimeNanoseconds) / 1e9;
+    Result.MeanTimeNanoseconds  =
         static_cast<double>(Result.TotalTimeNanoseconds) / static_cast<double>(Iterations);
     Result.ThroughputOpsPerSecond =
         TotalSeconds > 0.0 ? static_cast<double>(Iterations) / TotalSeconds : 0.0;
 
-    if (Options.ShouldMeasureIndividualTimes && !PerIterationTimes.empty())
-    {
+    if (Options.ShouldMeasureIndividualTimes && !PerIterationTimes.empty()) {
         std::sort(PerIterationTimes.begin(), PerIterationTimes.end());
 
-        Result.HasDistribution = true;
+        Result.HasDistribution    = true;
         Result.MinTimeNanoseconds = PerIterationTimes.front();
         Result.MaxTimeNanoseconds = PerIterationTimes.back();
 
         const std::size_t Count = PerIterationTimes.size();
-        if (Count % 2 == 1)
-        {
+        if (Count % 2 == 1) {
             Result.MedianTimeNanoseconds = PerIterationTimes[Count / 2];
         }
-        else
-        {
+        else {
             Result.MedianTimeNanoseconds =
                 (PerIterationTimes[Count / 2 - 1] + PerIterationTimes[Count / 2]) / 2.0;
         }
 
         double Sum = 0.0;
-        for (double Time : PerIterationTimes)
-        {
+        for (double Time: PerIterationTimes) {
             Sum += Time;
         }
         const double Mean = Sum / static_cast<double>(Count);
 
         double SquaredSum = 0.0;
-        for (double Time : PerIterationTimes)
-        {
+        for (double Time: PerIterationTimes) {
             const double Difference = Time - Mean;
-            SquaredSum += Difference * Difference;
+            SquaredSum              += Difference * Difference;
         }
         Result.StddevTimeNanoseconds = std::sqrt(SquaredSum / static_cast<double>(Count));
     }
@@ -643,20 +594,16 @@ inline BenchmarkResult runOne(const Detail::BenchmarkEntry& Entry, const Benchma
  * @param Options 配置项。
  * @return 该基准的测量结果。
  */
-inline BenchmarkResult runOne(const std::string& Name, const BenchmarkOptions& Options = BenchmarkOptions())
-{
-    const Detail::BenchmarkEntry* Found = nullptr;
-    for (const Detail::BenchmarkEntry& Entry : Detail::getRegistry())
-    {
-        if (Entry.Name == Name)
-        {
+inline BenchmarkResult runOne(const std::string &Name, const BenchmarkOptions &Options = BenchmarkOptions()) {
+    const Detail::BenchmarkEntry *Found = nullptr;
+    for (const Detail::BenchmarkEntry &Entry: Detail::getRegistry()) {
+        if (Entry.Name == Name) {
             Found = &Entry;
             break;
         }
     }
 
-    if (Found == nullptr)
-    {
+    if (Found == nullptr) {
         throw std::runtime_error("benchmark not found: " + Name);
     }
 
@@ -668,11 +615,9 @@ inline BenchmarkResult runOne(const std::string& Name, const BenchmarkOptions& O
  * @param Options 配置项。
  * @return 按注册顺序排列的测量结果。
  */
-inline std::vector<BenchmarkResult> runAll(const BenchmarkOptions& Options = BenchmarkOptions())
-{
+inline std::vector<BenchmarkResult> runAll(const BenchmarkOptions &Options = BenchmarkOptions()) {
     std::vector<BenchmarkResult> Results;
-    for (const Detail::BenchmarkEntry& Entry : Detail::getRegistry())
-    {
+    for (const Detail::BenchmarkEntry &Entry: Detail::getRegistry()) {
         Results.push_back(runOne(Entry, Options));
     }
     return Results;
@@ -684,9 +629,8 @@ inline std::vector<BenchmarkResult> runAll(const BenchmarkOptions& Options = Ben
  * @param Options 配置项。
  * @return JSON 字符串。
  */
-inline std::string serializeJson(const std::vector<BenchmarkResult>& Results,
-                                 const BenchmarkOptions& Options)
-{
+inline std::string serializeJson(const std::vector<BenchmarkResult> &Results,
+                                 const BenchmarkOptions &Options) {
     Detail::JsonWriter Writer(true, 2);
     Writer.beginObject();
 
@@ -696,8 +640,7 @@ inline std::string serializeJson(const std::vector<BenchmarkResult>& Results,
     Writer.writeKey("benchmarks");
     Writer.beginArray();
 
-    for (const BenchmarkResult& Result : Results)
-    {
+    for (const BenchmarkResult &Result: Results) {
         Writer.beginObject();
 
         Writer.writeKey("name");
@@ -712,8 +655,7 @@ inline std::string serializeJson(const std::vector<BenchmarkResult>& Results,
         Writer.writeKey("mean_time");
         Writer.writeDouble(Detail::convertNanoseconds(Result.MeanTimeNanoseconds, Options.TimeUnit));
 
-        if (Result.HasDistribution)
-        {
+        if (Result.HasDistribution) {
             Writer.writeKey("min_time");
             Writer.writeDouble(Detail::convertNanoseconds(Result.MinTimeNanoseconds, Options.TimeUnit));
 
@@ -745,19 +687,17 @@ inline std::string serializeJson(const std::vector<BenchmarkResult>& Results,
  * @param Options 配置项。
  * @notice 会覆盖已有文件。
  */
-inline void writeJson(const std::string& Path, const std::vector<BenchmarkResult>& Results,
-                      const BenchmarkOptions& Options = BenchmarkOptions())
-{
+inline void writeJson(const std::string &Path,
+                      const std::vector<BenchmarkResult> &Results,
+                      const BenchmarkOptions &Options = BenchmarkOptions()) {
     std::ofstream Output(Path, std::ios::binary | std::ios::trunc);
-    if (!Output)
-    {
+    if (!Output) {
         throw std::runtime_error("cannot open output file: " + Path);
     }
 
     const std::string Text = serializeJson(Results, Options);
     Output.write(Text.data(), static_cast<std::streamsize>(Text.size()));
-    if (!Output)
-    {
+    if (!Output) {
         throw std::runtime_error("failed to write output file: " + Path);
     }
 }
@@ -768,15 +708,12 @@ inline void writeJson(const std::string& Path, const std::vector<BenchmarkResult
  * @param Options 配置项。
  * @return 成功返回 0，失败返回 1。
  */
-inline int runAll(const std::string& JsonPath, const BenchmarkOptions& Options = BenchmarkOptions())
-{
-    try
-    {
+inline int runAll(const std::string &JsonPath, const BenchmarkOptions &Options = BenchmarkOptions()) {
+    try {
         writeJson(JsonPath, runAll(Options), Options);
         return 0;
     }
-    catch (const std::exception& Exception)
-    {
+    catch (const std::exception &Exception) {
         std::cerr << "benchmark error: " << Exception.what() << "\n";
         return 1;
     }
@@ -787,103 +724,98 @@ inline int runAll(const std::string& JsonPath, const BenchmarkOptions& Options =
 /**
  * @brief 单个命名代码段的聚合统计。
  */
-struct SectionStats
-{
+struct SectionStats {
     std::string Name;
 
     // @brief 跨所有记录的调用统计。
-    std::int64_t CallCount = 0;
+    std::int64_t CallCount            = 0;
     std::int64_t TotalTimeNanoseconds = 0;
-    std::int64_t MinTimeNanoseconds = 0;
-    std::int64_t MaxTimeNanoseconds = 0;
-    double MeanTimeNanoseconds = 0.0;
-    double StddevTimeNanoseconds = 0.0;
+    std::int64_t MinTimeNanoseconds   = 0;
+    std::int64_t MaxTimeNanoseconds   = 0;
+    double MeanTimeNanoseconds        = 0.0;
+    double StddevTimeNanoseconds      = 0.0;
 
     // @brief 跨该段出现过的帧的统计。
-    std::int64_t AppearedFrameCount = 0;
-    std::int64_t FrameCallCountMin = 0;
-    std::int64_t FrameCallCountMax = 0;
-    double FrameCallCountMean = 0.0;
+    std::int64_t AppearedFrameCount      = 0;
+    std::int64_t FrameCallCountMin       = 0;
+    std::int64_t FrameCallCountMax       = 0;
+    double FrameCallCountMean            = 0.0;
     std::int64_t FrameTimeNanosecondsMin = 0;
     std::int64_t FrameTimeNanosecondsMax = 0;
-    double FrameTimeNanosecondsMean = 0.0;
+    double FrameTimeNanosecondsMean      = 0.0;
 };
 
 /**
  * @brief 单次测量完成后的 JSON 立即输出目标。
  */
-enum class EMeasurementSink
-{
-    None,      // @brief 不立即输出(仅累积)。
-    StdOut,    // @brief 写入 stdout。
-    StdErr,    // @brief 写入 stderr。
-    File,      // @brief 追加写入配置的文件。
-    Callback,  // @brief 转发给配置的回调。
+enum class EMeasurementSink {
+    None,     // @brief 不立即输出(仅累积)。
+    StdOut,   // @brief 写入 stdout。
+    StdErr,   // @brief 写入 stderr。
+    File,     // @brief 追加写入配置的文件。
+    Callback, // @brief 转发给配置的回调。
 };
 
 /**
  * @brief 计时作用域内记录的一个打桩点。
  * @notice ElapsedNanoseconds 表示相对上一个打桩点(或计时起点)的耗时。
  */
-struct CheckpointRecord
-{
+struct CheckpointRecord {
     std::string Name;
-    std::int64_t StartNanoseconds = 0;   // @brief 该段开始的 epoch 纳秒时间。
+    std::int64_t StartNanoseconds   = 0; // @brief 该段开始的 epoch 纳秒时间。
     std::int64_t ElapsedNanoseconds = 0; // @brief 该段耗时。
 };
 
 /**
  * @brief 一次完成的测量。
  */
-struct MeasurementRecord
-{
+struct MeasurementRecord {
     std::string Name;
-    std::int64_t StartNanoseconds = 0;   // @brief 测量开始的 epoch 纳秒时间。
-    std::int64_t ElapsedNanoseconds = 0; // @brief 本次总耗时。
-    std::int64_t Sequence = 0;           // @brief 所有测量中的全局序号。
-    std::int64_t FrameIndex = 0;         // @brief 1 起算的当前帧；未开帧为 0。
-    std::int64_t FrameCallIndex = 0;     // @brief 帧内第几次调用(1 起)；未开帧为 0。
+    std::int64_t StartNanoseconds   = 0;       // @brief 测量开始的 epoch 纳秒时间。
+    std::int64_t ElapsedNanoseconds = 0;       // @brief 本次总耗时。
+    std::int64_t Sequence           = 0;       // @brief 所有测量中的全局序号。
+    std::int64_t FrameIndex         = 0;       // @brief 1 起算的当前帧；未开帧为 0。
+    std::int64_t FrameCallIndex     = 0;       // @brief 帧内第几次调用(1 起)；未开帧为 0。
     std::vector<CheckpointRecord> Checkpoints; // @brief 计时作用域内记录的打桩点。
 };
 
-namespace Detail
-{
-
+namespace Detail{
 /**
  * @brief manager 内部的按段累加器。
  */
-struct SectionAccumulator
-{
+struct SectionAccumulator {
     std::string Name;
 
-    std::int64_t CallCount = 0;
+    std::int64_t CallCount            = 0;
     std::int64_t TotalTimeNanoseconds = 0;
-    std::int64_t MinTimeNanoseconds = std::numeric_limits<std::int64_t>::max();
-    std::int64_t MaxTimeNanoseconds = 0;
-    double SumOfSquaresNanoseconds = 0.0;
+    std::int64_t MinTimeNanoseconds   = std::numeric_limits<std::int64_t>::max();
+    std::int64_t MaxTimeNanoseconds   = 0;
+    double SumOfSquaresNanoseconds    = 0.0;
 
     // @brief 当前(未结束)帧的计数。
-    std::int64_t FrameCallCount = 0;
+    std::int64_t FrameCallCount       = 0;
     std::int64_t FrameTimeNanoseconds = 0;
 
     // @brief 跨该段出现过的帧的聚合。
     std::int64_t AppearedFrameCount = 0;
-    std::int64_t FrameCallCountSum = 0;
-    std::int64_t FrameCallCountMin = std::numeric_limits<std::int64_t>::max();
-    std::int64_t FrameCallCountMax = 0;
-    std::int64_t FrameTimeSum = 0;
-    std::int64_t FrameTimeMin = std::numeric_limits<std::int64_t>::max();
-    std::int64_t FrameTimeMax = 0;
+    std::int64_t FrameCallCountSum  = 0;
+    std::int64_t FrameCallCountMin  = std::numeric_limits<std::int64_t>::max();
+    std::int64_t FrameCallCountMax  = 0;
+    std::int64_t FrameTimeSum       = 0;
+    std::int64_t FrameTimeMin       = std::numeric_limits<std::int64_t>::max();
+    std::int64_t FrameTimeMax       = 0;
 };
 
 /**
  * @brief 单线程 manager 使用的空锁策略。
  * @notice 空实现会被优化器完全消除，因此单线程版本零同步开销。
  */
-struct NoOpLock
-{
-    void lock() {}
-    void unlock() {}
+struct NoOpLock {
+    void lock() {
+    }
+
+    void unlock() {
+    }
 };
 
 /**
@@ -892,8 +824,7 @@ struct NoOpLock
  * @param Unit 时间单位。
  * @return JSON 字符串。
  */
-inline std::string serializeMeasurement(const MeasurementRecord& Record, ETimeUnit Unit)
-{
+inline std::string serializeMeasurement(const MeasurementRecord &Record, ETimeUnit Unit) {
     JsonWriter Writer(false);
 
     Writer.beginObject();
@@ -912,12 +843,10 @@ inline std::string serializeMeasurement(const MeasurementRecord& Record, ETimeUn
     Writer.writeKey("frame_call_index");
     Writer.writeInt(Record.FrameCallIndex);
 
-    if (!Record.Checkpoints.empty())
-    {
+    if (!Record.Checkpoints.empty()) {
         Writer.writeKey("checkpoints");
         Writer.beginArray();
-        for (const CheckpointRecord& Checkpoint : Record.Checkpoints)
-        {
+        for (const CheckpointRecord &Checkpoint: Record.Checkpoints) {
             Writer.beginObject();
             Writer.writeKey("name");
             Writer.writeString(Checkpoint.Name);
@@ -933,32 +862,27 @@ inline std::string serializeMeasurement(const MeasurementRecord& Record, ETimeUn
     Writer.endObject();
     return Writer.toString();
 }
-
 } // namespace Detail
 
-template <typename ManagerT>
+template<typename ManagerT>
 class BenchmarkTimerBase;
 
-namespace Detail
-{
-
+namespace Detail{
 /**
  * @brief 两个 manager 共享的实现。
  * @param LockT 同步策略：单线程用 NoOpLock，线程安全用 std::mutex。
  * @notice 两者是独立的类型、独立的单例。
  */
-template <typename LockT>
-class BenchmarkManagerBase
-{
+template<typename LockT>
+class BenchmarkManagerBase {
 public:
-    using TimerType = BenchmarkTimerBase<BenchmarkManagerBase<LockT>>;
+    using TimerType = BenchmarkTimerBase<BenchmarkManagerBase<LockT> >;
 
     /**
      * @brief 返回单例。
      * @return 单例引用。
      */
-    static BenchmarkManagerBase& get()
-    {
+    static BenchmarkManagerBase &get() {
         static BenchmarkManagerBase Instance;
         return Instance;
     }
@@ -969,8 +893,7 @@ public:
      * @param Nanoseconds 本次耗时。
      * @notice 同时把完成的测量发往配置的 sink(见 setMeasurementSink)。
      */
-    void recordTime(const std::string& Name, std::int64_t Nanoseconds)
-    {
+    void recordTime(const std::string &Name, std::int64_t Nanoseconds) {
         recordTime(Name, Nanoseconds, 0, std::vector<CheckpointRecord>());
     }
 
@@ -982,28 +905,28 @@ public:
      * @param Checkpoints 打桩点列表。
      * @notice 每个打桩点的耗时相对上一个打桩点(或计时起点)。
      */
-    void recordTime(const std::string& Name, std::int64_t Nanoseconds,
-                    std::int64_t StartNanoseconds, std::vector<CheckpointRecord> Checkpoints)
-    {
-        if (Nanoseconds < 0)
-        {
+    void recordTime(const std::string &Name,
+                    std::int64_t Nanoseconds,
+                    std::int64_t StartNanoseconds,
+                    std::vector<CheckpointRecord> Checkpoints) {
+        if (Nanoseconds < 0) {
             Nanoseconds = 0;
         }
 
         std::string Json;
-        bool HasJson = false;
+        bool HasJson              = false;
         EMeasurementSink SinkKind = EMeasurementSink::None;
         std::string FilePath;
-        std::function<void(const std::string&)> Callback;
+        std::function<void(const std::string &)> Callback;
 
         {
             std::lock_guard<LockT> Guard(Lock);
 
-            Detail::SectionAccumulator& Section = findOrCreate(Name);
+            Detail::SectionAccumulator &Section = findOrCreate(Name);
             ++Section.CallCount;
-            Section.TotalTimeNanoseconds += Nanoseconds;
-            Section.MinTimeNanoseconds = (std::min)(Section.MinTimeNanoseconds, Nanoseconds);
-            Section.MaxTimeNanoseconds = (std::max)(Section.MaxTimeNanoseconds, Nanoseconds);
+            Section.TotalTimeNanoseconds    += Nanoseconds;
+            Section.MinTimeNanoseconds      = (std::min)(Section.MinTimeNanoseconds, Nanoseconds);
+            Section.MaxTimeNanoseconds      = (std::max)(Section.MaxTimeNanoseconds, Nanoseconds);
             Section.SumOfSquaresNanoseconds +=
                 static_cast<double>(Nanoseconds) * static_cast<double>(Nanoseconds);
 
@@ -1011,38 +934,33 @@ public:
             Section.FrameTimeNanoseconds += Nanoseconds;
 
             HasJson = ShouldStoreMeasurements || MeasurementSink != EMeasurementSink::None;
-            if (HasJson)
-            {
+            if (HasJson) {
                 MeasurementRecord Record;
-                Record.Name = Name;
-                Record.StartNanoseconds = StartNanoseconds;
+                Record.Name               = Name;
+                Record.StartNanoseconds   = StartNanoseconds;
                 Record.ElapsedNanoseconds = Nanoseconds;
-                Record.Sequence = ++MeasurementSequence;
-                Record.FrameIndex = HasOpenFrame ? TotalFrameCount + 1 : 0;
-                Record.FrameCallIndex = Section.FrameCallCount;
-                Record.Checkpoints = std::move(Checkpoints);
+                Record.Sequence           = ++MeasurementSequence;
+                Record.FrameIndex         = HasOpenFrame ? TotalFrameCount + 1 : 0;
+                Record.FrameCallIndex     = Section.FrameCallCount;
+                Record.Checkpoints        = std::move(Checkpoints);
 
                 Json = serializeMeasurement(Record, TimeUnit);
 
-                if (ShouldStoreMeasurements)
-                {
+                if (ShouldStoreMeasurements) {
                     MeasurementRecords.push_back(std::move(Record));
                 }
             }
 
             SinkKind = MeasurementSink;
-            if (SinkKind == EMeasurementSink::File)
-            {
+            if (SinkKind == EMeasurementSink::File) {
                 FilePath = MeasurementFilePath;
             }
-            else if (SinkKind == EMeasurementSink::Callback)
-            {
+            else if (SinkKind == EMeasurementSink::Callback) {
                 Callback = MeasurementCallback;
             }
         }
 
-        if (HasJson)
-        {
+        if (HasJson) {
             emitMeasurement(SinkKind, FilePath, Callback, Json);
         }
     }
@@ -1051,20 +969,16 @@ public:
      * @brief 标记新一帧的开始。
      * @notice 若已有未结束的帧，会先将其结算。
      */
-    void beginFrame()
-    {
+    void beginFrame() {
         std::lock_guard<LockT> Guard(Lock);
 
-        if (HasOpenFrame)
-        {
+        if (HasOpenFrame) {
             finalizeCurrentFrame();
         }
-        else
-        {
+        else {
             // @brief 丢弃任何帧开始前记录的游离计数。
-            for (Detail::SectionAccumulator& Section : Sections)
-            {
-                Section.FrameCallCount = 0;
+            for (Detail::SectionAccumulator &Section: Sections) {
+                Section.FrameCallCount       = 0;
                 Section.FrameTimeNanoseconds = 0;
             }
         }
@@ -1075,12 +989,10 @@ public:
     /**
      * @brief 标记当前帧结束，并把计数并入按帧统计。
      */
-    void endFrame()
-    {
+    void endFrame() {
         std::lock_guard<LockT> Guard(Lock);
 
-        if (!HasOpenFrame)
-        {
+        if (!HasOpenFrame) {
             return;
         }
 
@@ -1093,14 +1005,13 @@ public:
      * @param Name 段名。
      * @return RAII 计时器。
      */
-    TimerType measure(const std::string& Name);
+    TimerType measure(const std::string &Name);
 
     /**
      * @brief 返回按首次出现顺序排列的聚合统计。
      * @return SectionStats 列表。
      */
-    std::vector<SectionStats> getStats() const
-    {
+    std::vector<SectionStats> getStats() const {
         std::lock_guard<LockT> Guard(Lock);
         return buildStats();
     }
@@ -1109,8 +1020,7 @@ public:
      * @brief 返回已统计的总帧数。
      * @return 总帧数。
      */
-    std::int64_t getTotalFrameCount() const
-    {
+    std::int64_t getTotalFrameCount() const {
         std::lock_guard<LockT> Guard(Lock);
         return TotalFrameCount;
     }
@@ -1118,12 +1028,11 @@ public:
     /**
      * @brief 清空所有累计数据(统计与测量记录)。
      */
-    void reset()
-    {
+    void reset() {
         std::lock_guard<LockT> Guard(Lock);
         Sections.clear();
         TotalFrameCount = 0;
-        HasOpenFrame = false;
+        HasOpenFrame    = false;
         MeasurementRecords.clear();
         MeasurementSequence = 0;
     }
@@ -1132,8 +1041,7 @@ public:
      * @brief 设置序列化到 JSON 时使用的时长单位。
      * @param Unit 时间单位。
      */
-    void setTimeUnit(ETimeUnit Unit)
-    {
+    void setTimeUnit(ETimeUnit Unit) {
         std::lock_guard<LockT> Guard(Lock);
         TimeUnit = Unit;
     }
@@ -1142,8 +1050,7 @@ public:
      * @brief 返回当前时长单位。
      * @return 时间单位。
      */
-    ETimeUnit getTimeUnit() const
-    {
+    ETimeUnit getTimeUnit() const {
         std::lock_guard<LockT> Guard(Lock);
         return TimeUnit;
     }
@@ -1152,8 +1059,7 @@ public:
      * @brief 设置单次测量 JSON 的立即输出目标。
      * @param SinkKind 输出目标。
      */
-    void setMeasurementSink(EMeasurementSink SinkKind)
-    {
+    void setMeasurementSink(EMeasurementSink SinkKind) {
         std::lock_guard<LockT> Guard(Lock);
         MeasurementSink = SinkKind;
     }
@@ -1163,8 +1069,7 @@ public:
      * @param Path 文件路径。
      * @notice 每次测量追加一行。
      */
-    void setMeasurementFile(const std::string& Path)
-    {
+    void setMeasurementFile(const std::string &Path) {
         std::lock_guard<LockT> Guard(Lock);
         MeasurementFilePath = Path;
     }
@@ -1173,8 +1078,7 @@ public:
      * @brief 设置 EMeasurementSink::Callback 使用的回调。
      * @param Callback 回调函数。
      */
-    void setMeasurementCallback(std::function<void(const std::string&)> Callback)
-    {
+    void setMeasurementCallback(std::function<void(const std::string &)> Callback) {
         std::lock_guard<LockT> Guard(Lock);
         MeasurementCallback = std::move(Callback);
     }
@@ -1183,8 +1087,7 @@ public:
      * @brief 控制是否在内存中累积完成的测量。
      * @param ShouldStore 是否累积。
      */
-    void setShouldStoreMeasurements(bool ShouldStore)
-    {
+    void setShouldStoreMeasurements(bool ShouldStore) {
         std::lock_guard<LockT> Guard(Lock);
         ShouldStoreMeasurements = ShouldStore;
     }
@@ -1193,8 +1096,7 @@ public:
      * @brief 返回已累积的测量记录副本。
      * @return MeasurementRecord 列表。
      */
-    std::vector<MeasurementRecord> getMeasurementRecords() const
-    {
+    std::vector<MeasurementRecord> getMeasurementRecords() const {
         std::lock_guard<LockT> Guard(Lock);
         return MeasurementRecords;
     }
@@ -1203,13 +1105,11 @@ public:
      * @brief 返回已累积的单次测量 JSON 列表(即时序列化)。
      * @return JSON 字符串列表。
      */
-    std::vector<std::string> getMeasurementLog() const
-    {
+    std::vector<std::string> getMeasurementLog() const {
         std::lock_guard<LockT> Guard(Lock);
         std::vector<std::string> Result;
         Result.reserve(MeasurementRecords.size());
-        for (const MeasurementRecord& Record : MeasurementRecords)
-        {
+        for (const MeasurementRecord &Record: MeasurementRecords) {
             Result.push_back(serializeMeasurement(Record, TimeUnit));
         }
         return Result;
@@ -1218,8 +1118,7 @@ public:
     /**
      * @brief 清空已累积的测量记录(保留 sink 配置)。
      */
-    void clearMeasurementLog()
-    {
+    void clearMeasurementLog() {
         std::lock_guard<LockT> Guard(Lock);
         MeasurementRecords.clear();
     }
@@ -1229,8 +1128,7 @@ public:
      * @param Path 输出路径。
      * @return 成功返回 0，失败返回 1。
      */
-    int writeMeasurementLog(const std::string& Path) const
-    {
+    int writeMeasurementLog(const std::string &Path) const {
         std::vector<MeasurementRecord> Copy;
         ETimeUnit Unit = ETimeUnit::Millisecond;
         {
@@ -1239,25 +1137,20 @@ public:
             Unit = TimeUnit;
         }
 
-        try
-        {
+        try {
             std::ofstream Output(Path, std::ios::binary | std::ios::trunc);
-            if (!Output)
-            {
+            if (!Output) {
                 throw std::runtime_error("cannot open output file: " + Path);
             }
-            for (const MeasurementRecord& Record : Copy)
-            {
+            for (const MeasurementRecord &Record: Copy) {
                 Output << serializeMeasurement(Record, Unit) << '\n';
             }
-            if (!Output)
-            {
+            if (!Output) {
                 throw std::runtime_error("failed to write output file: " + Path);
             }
             return 0;
         }
-        catch (const std::exception& Exception)
-        {
+        catch (const std::exception &Exception) {
             std::cerr << "benchmark error: " << Exception.what() << "\n";
             return 1;
         }
@@ -1267,8 +1160,7 @@ public:
      * @brief 将聚合统计序列化为 JSON 字符串。
      * @return JSON 字符串。
      */
-    std::string serializeJson() const
-    {
+    std::string serializeJson() const {
         std::lock_guard<LockT> Guard(Lock);
 
         const std::vector<SectionStats> Stats = buildStats();
@@ -1285,8 +1177,7 @@ public:
         Writer.writeKey("sections");
         Writer.beginArray();
 
-        for (const SectionStats& Section : Stats)
-        {
+        for (const SectionStats &Section: Stats) {
             Writer.beginObject();
 
             Writer.writeKey("name");
@@ -1345,26 +1236,21 @@ public:
      * @return 成功返回 0，失败返回 1。
      * @notice 会覆盖已有文件。
      */
-    int writeJson(const std::string& Path) const
-    {
-        try
-        {
+    int writeJson(const std::string &Path) const {
+        try {
             const std::string Text = serializeJson();
 
             std::ofstream Output(Path, std::ios::binary | std::ios::trunc);
-            if (!Output)
-            {
+            if (!Output) {
                 throw std::runtime_error("cannot open output file: " + Path);
             }
             Output.write(Text.data(), static_cast<std::streamsize>(Text.size()));
-            if (!Output)
-            {
+            if (!Output) {
                 throw std::runtime_error("failed to write output file: " + Path);
             }
             return 0;
         }
-        catch (const std::exception& Exception)
-        {
+        catch (const std::exception &Exception) {
             std::cerr << "benchmark error: " << Exception.what() << "\n";
             return 1;
         }
@@ -1375,8 +1261,7 @@ public:
      * @return trace JSON 字符串。
      * @notice 输出可直接在 chrome://tracing 或 Perfetto 中打开；时间单位为微秒。
      */
-    std::string serializeTrace() const
-    {
+    std::string serializeTrace() const {
         std::vector<MeasurementRecord> Copy;
         {
             std::lock_guard<LockT> Guard(Lock);
@@ -1389,8 +1274,7 @@ public:
         Writer.writeKey("traceEvents");
         Writer.beginArray();
 
-        for (const MeasurementRecord& Record : Copy)
-        {
+        for (const MeasurementRecord &Record: Copy) {
             Writer.beginObject();
             Writer.writeKey("name");
             Writer.writeString(Record.Name);
@@ -1408,8 +1292,7 @@ public:
             Writer.writeInt(0);
             Writer.endObject();
 
-            for (const CheckpointRecord& Checkpoint : Record.Checkpoints)
-            {
+            for (const CheckpointRecord &Checkpoint: Record.Checkpoints) {
                 Writer.beginObject();
                 Writer.writeKey("name");
                 Writer.writeString(Checkpoint.Name);
@@ -1441,26 +1324,21 @@ public:
      * @param Path 输出路径。
      * @return 成功返回 0，失败返回 1。
      */
-    int writeTrace(const std::string& Path) const
-    {
-        try
-        {
+    int writeTrace(const std::string &Path) const {
+        try {
             const std::string Text = serializeTrace();
 
             std::ofstream Output(Path, std::ios::binary | std::ios::trunc);
-            if (!Output)
-            {
+            if (!Output) {
                 throw std::runtime_error("cannot open output file: " + Path);
             }
             Output.write(Text.data(), static_cast<std::streamsize>(Text.size()));
-            if (!Output)
-            {
+            if (!Output) {
                 throw std::runtime_error("failed to write output file: " + Path);
             }
             return 0;
         }
-        catch (const std::exception& Exception)
-        {
+        catch (const std::exception &Exception) {
             std::cerr << "benchmark error: " << Exception.what() << "\n";
             return 1;
         }
@@ -1468,9 +1346,12 @@ public:
 
 private:
     BenchmarkManagerBase() = default;
+
     ~BenchmarkManagerBase() = default;
-    BenchmarkManagerBase(const BenchmarkManagerBase&) = delete;
-    BenchmarkManagerBase& operator=(const BenchmarkManagerBase&) = delete;
+
+    BenchmarkManagerBase(const BenchmarkManagerBase &) = delete;
+
+    BenchmarkManagerBase &operator=(const BenchmarkManagerBase &) = delete;
 
     /**
      * @brief 查找或创建指定名称的累加器。
@@ -1478,12 +1359,9 @@ private:
      * @return 累加器引用。
      * @notice 调用方必须已持有锁。
      */
-    Detail::SectionAccumulator& findOrCreate(const std::string& Name)
-    {
-        for (Detail::SectionAccumulator& Section : Sections)
-        {
-            if (Section.Name == Name)
-            {
+    Detail::SectionAccumulator &findOrCreate(const std::string &Name) {
+        for (Detail::SectionAccumulator &Section: Sections) {
+            if (Section.Name == Name) {
                 return Section;
             }
         }
@@ -1497,22 +1375,19 @@ private:
      * @brief 结算当前帧。
      * @notice 调用方必须已持有锁。
      */
-    void finalizeCurrentFrame()
-    {
-        for (Detail::SectionAccumulator& Section : Sections)
-        {
-            if (Section.FrameCallCount > 0)
-            {
+    void finalizeCurrentFrame() {
+        for (Detail::SectionAccumulator &Section: Sections) {
+            if (Section.FrameCallCount > 0) {
                 ++Section.AppearedFrameCount;
                 Section.FrameCallCountSum += Section.FrameCallCount;
                 Section.FrameCallCountMin = (std::min)(Section.FrameCallCountMin, Section.FrameCallCount);
                 Section.FrameCallCountMax = (std::max)(Section.FrameCallCountMax, Section.FrameCallCount);
-                Section.FrameTimeSum += Section.FrameTimeNanoseconds;
-                Section.FrameTimeMin = (std::min)(Section.FrameTimeMin, Section.FrameTimeNanoseconds);
-                Section.FrameTimeMax = (std::max)(Section.FrameTimeMax, Section.FrameTimeNanoseconds);
+                Section.FrameTimeSum      += Section.FrameTimeNanoseconds;
+                Section.FrameTimeMin      = (std::min)(Section.FrameTimeMin, Section.FrameTimeNanoseconds);
+                Section.FrameTimeMax      = (std::max)(Section.FrameTimeMax, Section.FrameTimeNanoseconds);
             }
 
-            Section.FrameCallCount = 0;
+            Section.FrameCallCount       = 0;
             Section.FrameTimeNanoseconds = 0;
         }
 
@@ -1524,22 +1399,19 @@ private:
      * @return SectionStats 列表。
      * @notice 调用方必须已持有锁。
      */
-    std::vector<SectionStats> buildStats() const
-    {
+    std::vector<SectionStats> buildStats() const {
         std::vector<SectionStats> Stats;
         Stats.reserve(Sections.size());
 
-        for (const Detail::SectionAccumulator& Section : Sections)
-        {
+        for (const Detail::SectionAccumulator &Section: Sections) {
             SectionStats Item;
-            Item.Name = Section.Name;
-            Item.CallCount = Section.CallCount;
+            Item.Name                 = Section.Name;
+            Item.CallCount            = Section.CallCount;
             Item.TotalTimeNanoseconds = Section.TotalTimeNanoseconds;
-            Item.MinTimeNanoseconds = Section.CallCount > 0 ? Section.MinTimeNanoseconds : 0;
-            Item.MaxTimeNanoseconds = Section.MaxTimeNanoseconds;
+            Item.MinTimeNanoseconds   = Section.CallCount > 0 ? Section.MinTimeNanoseconds : 0;
+            Item.MaxTimeNanoseconds   = Section.MaxTimeNanoseconds;
 
-            if (Section.CallCount > 0)
-            {
+            if (Section.CallCount > 0) {
                 Item.MeanTimeNanoseconds =
                     static_cast<double>(Section.TotalTimeNanoseconds) / static_cast<double>(Section.CallCount);
                 const double Variance =
@@ -1548,14 +1420,13 @@ private:
                 Item.StddevTimeNanoseconds = Variance > 0.0 ? std::sqrt(Variance) : 0.0;
             }
 
-            Item.AppearedFrameCount = Section.AppearedFrameCount;
-            Item.FrameCallCountMin = Section.AppearedFrameCount > 0 ? Section.FrameCallCountMin : 0;
-            Item.FrameCallCountMax = Section.FrameCallCountMax;
+            Item.AppearedFrameCount      = Section.AppearedFrameCount;
+            Item.FrameCallCountMin       = Section.AppearedFrameCount > 0 ? Section.FrameCallCountMin : 0;
+            Item.FrameCallCountMax       = Section.FrameCallCountMax;
             Item.FrameTimeNanosecondsMin = Section.AppearedFrameCount > 0 ? Section.FrameTimeMin : 0;
             Item.FrameTimeNanosecondsMax = Section.FrameTimeMax;
 
-            if (Section.AppearedFrameCount > 0)
-            {
+            if (Section.AppearedFrameCount > 0) {
                 Item.FrameCallCountMean =
                     static_cast<double>(Section.FrameCallCountSum) /
                     static_cast<double>(Section.AppearedFrameCount);
@@ -1579,40 +1450,33 @@ private:
      * @notice 在未持有锁时调用，因此回调可安全地重入 manager。
      */
     static void emitMeasurement(EMeasurementSink SinkKind,
-                                const std::string& FilePath,
-                                const std::function<void(const std::string&)>& Callback,
-                                const std::string& Json)
-    {
-        switch (SinkKind)
-        {
+                                const std::string &FilePath,
+                                const std::function<void(const std::string &)> &Callback,
+                                const std::string &Json) {
+        switch (SinkKind) {
             case EMeasurementSink::None:
                 break;
-            case EMeasurementSink::StdOut:
-            {
+            case EMeasurementSink::StdOut: {
                 const std::string Line = Json + "\n";
                 std::cout.write(Line.data(), static_cast<std::streamsize>(Line.size()));
                 std::cout.flush();
                 break;
             }
-            case EMeasurementSink::StdErr:
-            {
+            case EMeasurementSink::StdErr: {
                 const std::string Line = Json + "\n";
                 std::cerr.write(Line.data(), static_cast<std::streamsize>(Line.size()));
                 std::cerr.flush();
                 break;
             }
-            case EMeasurementSink::File:
-            {
+            case EMeasurementSink::File: {
                 std::ofstream Output(FilePath, std::ios::app | std::ios::binary);
-                if (Output)
-                {
+                if (Output) {
                     Output << Json << '\n';
                 }
                 break;
             }
             case EMeasurementSink::Callback:
-                if (Callback)
-                {
+                if (Callback) {
                     Callback(Json);
                 }
                 break;
@@ -1622,115 +1486,110 @@ private:
     mutable LockT Lock;
     std::vector<Detail::SectionAccumulator> Sections;
     std::int64_t TotalFrameCount = 0;
-    bool HasOpenFrame = false;
+    bool HasOpenFrame            = false;
 
     ETimeUnit TimeUnit = ETimeUnit::Millisecond;
 
     EMeasurementSink MeasurementSink = EMeasurementSink::None;
     std::string MeasurementFilePath;
-    std::function<void(const std::string&)> MeasurementCallback;
+    std::function<void(const std::string &)> MeasurementCallback;
     std::vector<MeasurementRecord> MeasurementRecords;
     std::int64_t MeasurementSequence = 0;
-    bool ShouldStoreMeasurements = true;
+    bool ShouldStoreMeasurements     = true;
 };
-
 } // namespace Detail
 
 /**
  * @brief RAII 计时器，在离开作用域(或调用 stop)时记录该段的耗时。
  * @param ManagerT 决定把耗时记录到哪个 manager 单例。
  */
-template <typename ManagerT>
-class BenchmarkTimerBase
-{
+template<typename ManagerT>
+class BenchmarkTimerBase {
 public:
     /**
      * @brief 构造计时器并开始计时。
      * @param Name 段名。
      */
     explicit BenchmarkTimerBase(std::string Name)
-        : Name(std::move(Name))
-        , Start(Clock::now())
-        , LastMark(Start)
-        , Checkpoints()
-        , IsActive(true)
-    {
+        : Name(std::move(Name)),
+          Start(Clock::now()),
+          LastMark(Start),
+          Checkpoints(),
+          IsActive(true) {
     }
 
     /**
      * @brief 析构时若仍处于激活状态，则记录本次耗时。
      */
-    ~BenchmarkTimerBase()
-    {
-        if (IsActive)
-        {
+    ~BenchmarkTimerBase() {
+        if (IsActive) {
             ManagerT::get().recordTime(
-                Name, Detail::getNanosecondsBetween(Start, Detail::getTimePoint()),
-                Detail::getEpochNanoseconds(Start), std::move(Checkpoints));
+                                       Name,
+                                       Detail::getNanosecondsBetween(Start, Detail::getTimePoint()),
+                                       Detail::getEpochNanoseconds(Start),
+                                       std::move(Checkpoints));
         }
     }
 
-    BenchmarkTimerBase(BenchmarkTimerBase&& Other) noexcept
-        : Name(std::move(Other.Name))
-        , Start(Other.Start)
-        , LastMark(Other.LastMark)
-        , Checkpoints(std::move(Other.Checkpoints))
-        , IsActive(Other.IsActive)
-    {
+    BenchmarkTimerBase(BenchmarkTimerBase &&Other) noexcept
+        : Name(std::move(Other.Name)),
+          Start(Other.Start),
+          LastMark(Other.LastMark),
+          Checkpoints(std::move(Other.Checkpoints)),
+          IsActive(Other.IsActive) {
         Other.IsActive = false;
     }
 
-    BenchmarkTimerBase& operator=(BenchmarkTimerBase&& Other) noexcept
-    {
-        if (this != &Other)
-        {
-            if (IsActive)
-            {
+    BenchmarkTimerBase &operator=(BenchmarkTimerBase &&Other) noexcept {
+        if (this != &Other) {
+            if (IsActive) {
                 ManagerT::get().recordTime(
-                    Name, Detail::getNanosecondsBetween(Start, Detail::getTimePoint()),
-                    Detail::getEpochNanoseconds(Start), std::move(Checkpoints));
+                                           Name,
+                                           Detail::getNanosecondsBetween(Start, Detail::getTimePoint()),
+                                           Detail::getEpochNanoseconds(Start),
+                                           std::move(Checkpoints));
             }
 
-            Name = std::move(Other.Name);
-            Start = Other.Start;
-            LastMark = Other.LastMark;
-            Checkpoints = std::move(Other.Checkpoints);
-            IsActive = Other.IsActive;
+            Name           = std::move(Other.Name);
+            Start          = Other.Start;
+            LastMark       = Other.LastMark;
+            Checkpoints    = std::move(Other.Checkpoints);
+            IsActive       = Other.IsActive;
             Other.IsActive = false;
         }
         return *this;
     }
 
-    BenchmarkTimerBase(const BenchmarkTimerBase&) = delete;
-    BenchmarkTimerBase& operator=(const BenchmarkTimerBase&) = delete;
+    BenchmarkTimerBase(const BenchmarkTimerBase &) = delete;
+
+    BenchmarkTimerBase &operator=(const BenchmarkTimerBase &) = delete;
 
     /**
      * @brief 在计时作用域内记录一个命名打桩点。
      * @param CheckpointName 打桩点名。
      * @notice 耗时相对上一个打桩点(或计时起点)。
      */
-    void mark(const std::string& CheckpointName)
-    {
-        if (!IsActive)
-        {
+    void mark(const std::string &CheckpointName) {
+        if (!IsActive) {
             return;
         }
 
         const Clock::time_point Now = Clock::now();
         Checkpoints.push_back(CheckpointRecord{
-            CheckpointName,
-            Detail::getEpochNanoseconds(LastMark),
-            Detail::getNanosecondsBetween(LastMark, Now)});
+                                  CheckpointName,
+                                  Detail::getEpochNanoseconds(LastMark),
+                                  Detail::getNanosecondsBetween(LastMark, Now)
+                              });
         LastMark = Now;
     }
 
-    void stop()
-    {
-        if (IsActive)
-        {
+    void stop() {
+        if (IsActive) {
             ManagerT::get().recordTime(
-                Name, Detail::getNanosecondsBetween(Start, Detail::getTimePoint()),
-                Detail::getEpochNanoseconds(Start), std::move(Checkpoints));
+                                       Name,
+                                       Detail::getNanosecondsBetween(Start, Detail::getTimePoint()),
+                                       Detail::getEpochNanoseconds(Start),
+                                       std::move(Checkpoints));
             IsActive = false;
         }
     }
@@ -1743,21 +1602,17 @@ private:
     bool IsActive;
 };
 
-namespace Detail
-{
-
+namespace Detail{
 /**
  * @brief 返回一个在作用域结束时记录的 RAII 计时器。
  * @param Name 段名。
  * @return RAII 计时器。
  */
-template <typename LockT>
+template<typename LockT>
 inline typename BenchmarkManagerBase<LockT>::TimerType
-BenchmarkManagerBase<LockT>::measure(const std::string& Name)
-{
+BenchmarkManagerBase<LockT>::measure(const std::string &Name) {
     return TimerType(Name);
 }
-
 } // namespace Detail
 
 // @brief 具体单线程 manager：零同步开销。
@@ -1767,9 +1622,8 @@ using BenchmarkManager = Detail::BenchmarkManagerBase<Detail::NoOpLock>;
 using ThreadSafeBenchmarkManager = Detail::BenchmarkManagerBase<std::mutex>;
 
 // @brief 对应的 RAII 计时器。
-using BenchmarkTimer = BenchmarkTimerBase<BenchmarkManager>;
+using BenchmarkTimer           = BenchmarkTimerBase<BenchmarkManager>;
 using ThreadSafeBenchmarkTimer = BenchmarkTimerBase<ThreadSafeBenchmarkManager>;
-
 } // namespace Bm
 
 // @brief 宏拼接辅助。
