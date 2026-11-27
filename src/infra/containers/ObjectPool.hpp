@@ -179,63 +179,61 @@ void destroyInStorage(AlignedStorage<Type>& Storage) {
 template <typename Type>
 struct Slot {
     AlignedStorage<Type> Storage;
-    bool bOccupied;
+    bool IsOccupied;
 
-    Slot() : Storage(), bOccupied(false) {}
+    Slot() : Storage(), IsOccupied(false) {}
 
-    Slot(Slot const& Other) : Storage(), bOccupied(false) {
-        if (Other.bOccupied) {
+    Slot(Slot const &Other) : Storage(),
+                              IsOccupied(false) {
+        if (Other.IsOccupied) {
             constructInStorage(Storage, *getObjectPointer(Other.Storage));
-            bOccupied = true;
+            IsOccupied = true;
         }
     }
 
-    Slot(Slot&& Other)
-        noexcept(std::is_nothrow_move_constructible<Type>::value)
-        : Storage(), bOccupied(false) {
-        if (Other.bOccupied) {
+    Slot(Slot &&Other)
+        noexcept(std::is_nothrow_move_constructible_v<Type>)
+        : Storage(),
+          IsOccupied(false) {
+        if (Other.IsOccupied) {
             constructInStorage(Storage,
                                std::move(*getObjectPointer(Other.Storage)));
-            bOccupied = true;
+            IsOccupied = true;
             // @notice 源即将被遗弃（如 vector 重分配后释放旧缓冲），
             //         因此销毁其移动后的值。
             destroyInStorage(Other.Storage);
-            Other.bOccupied = false;
+            Other.IsOccupied = false;
         }
     }
 
-    ~Slot() {
-        if (bOccupied)
-            destroyInStorage(Storage);
-    }
+    ~Slot() { if (IsOccupied) { destroyInStorage(Storage); } }
 
-    Slot& operator=(Slot const& Other) {
+    Slot &operator=(Slot const &Other) {
         if (this != &Other) {
-            if (bOccupied) {
+            if (IsOccupied) {
                 destroyInStorage(Storage);
-                bOccupied = false;
+                IsOccupied = false;
             }
-            if (Other.bOccupied) {
+            if (Other.IsOccupied) {
                 constructInStorage(Storage, *getObjectPointer(Other.Storage));
-                bOccupied = true;
+                IsOccupied = true;
             }
         }
         return *this;
     }
 
-    Slot& operator=(Slot&& Other)
-        noexcept(std::is_nothrow_move_constructible<Type>::value) {
+    Slot &operator=(Slot &&Other)
+        noexcept(std::is_nothrow_move_constructible_v<Type>) {
         if (this != &Other) {
-            if (bOccupied) {
+            if (IsOccupied) {
                 destroyInStorage(Storage);
-                bOccupied = false;
+                IsOccupied = false;
             }
-            if (Other.bOccupied) {
-                constructInStorage(Storage,
-                                   std::move(*getObjectPointer(Other.Storage)));
-                bOccupied = true;
+            if (Other.IsOccupied) {
+                constructInStorage(Storage, std::move(*getObjectPointer(Other.Storage)));
+                IsOccupied = true;
                 destroyInStorage(Other.Storage);
-                Other.bOccupied = false;
+                Other.IsOccupied = false;
             }
         }
         return *this;
@@ -256,10 +254,7 @@ struct CompactSlot {
  */
 template <typename Type>
 struct SlotSelector {
-    using type = typename std::conditional<
-        std::is_trivially_copyable<Type>::value,
-        CompactSlot<Type>,
-        Slot<Type>>::type;
+    using type = std::conditional_t<std::is_trivially_copyable_v<Type>, CompactSlot<Type>, Slot<Type>>;
 };
 
 /**
@@ -270,10 +265,7 @@ template <typename Container, typename = void>
 struct HasShrinkToFit : std::false_type {};
 
 template <typename Container>
-struct HasShrinkToFit<
-    Container,
-    decltype(void(std::declval<Container&>().shrink_to_fit()))>
-    : std::true_type {};
+struct HasShrinkToFit<Container, decltype(void(std::declval<Container&>().shrink_to_fit()))> : std::true_type {};
 
 /**
  * @brief 检测容器是否可增长（提供 emplace_back）。
@@ -283,10 +275,7 @@ template <typename Container, typename = void>
 struct HasEmplaceBack : std::false_type {};
 
 template <typename Container>
-struct HasEmplaceBack<
-    Container,
-    decltype(void(std::declval<Container&>().emplace_back()))>
-    : std::true_type {};
+struct HasEmplaceBack<Container, decltype(void(std::declval<Container&>().emplace_back()))> : std::true_type {};
 
 } // namespace ObjectPoolDetail
 
@@ -299,35 +288,33 @@ template <typename Type,
           template <typename, typename> class Container = std::vector>
 class ObjectPool {
 private:
-    using SlotType = typename ObjectPoolDetail::SlotSelector<Type>::type;
-    using SlotAllocator =
-        typename std::allocator_traits<Allocator>::template rebind_alloc<SlotType>;
-
-    using PoolTraits = std::allocator_traits<Allocator>;
+    using SlotType      = typename ObjectPoolDetail::SlotSelector<Type>::type;
+    using SlotAllocator = typename std::allocator_traits<Allocator>::template rebind_alloc<SlotType>;
+    using PoolTraits    = std::allocator_traits<Allocator>;
     using IsTrivialType = std::is_trivially_copyable<Type>;
 
 public:
-    using allocator_type = Allocator;
-    using value_type = Type;
-    using container_type = Container<SlotType, SlotAllocator>;
-    using size_type = typename container_type::size_type;
+    using allocator_type  = Allocator;
+    using value_type      = Type;
+    using container_type  = Container<SlotType, SlotAllocator>;
+    using size_type       = typename container_type::size_type;
     using difference_type = typename container_type::difference_type;
-    using reference = value_type&;
-    using const_reference = value_type const&;
-    using pointer = value_type*;
-    using const_pointer = value_type const*;
+    using reference       = value_type &;
+    using const_reference = value_type const &;
+    using pointer         = value_type *;
+    using const_pointer   = value_type const *;
 
     class const_iterator;
     class iterator;
 
-    using reverse_iterator = std::reverse_iterator<iterator>;
+    using reverse_iterator       = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
     // @notice 主模板要求随机访问序列容器。
     static_assert(
-        std::is_same<
+        std::is_same_v<
             typename container_type::iterator::iterator_category,
-            std::random_access_iterator_tag>::value,
+            std::random_access_iterator_tag>,
         "ObjectPool 主模板要求随机访问序列容器（std::vector、std::deque）。"
         "节点型容器请使用 std::list 偏特化。");
     // @notice 主模板要求可增长容器（std::array 为定长容器，不受支持）。
@@ -337,17 +324,14 @@ public:
         "请改用 std::vector/std::deque，或使用专用的定长对象池。");
 
 private:
-    using FreeListAllocator =
-        typename PoolTraits::template rebind_alloc<size_type>;
+    using FreeListAllocator = typename PoolTraits::template rebind_alloc<size_type>;
     using FreeListType = std::vector<size_type, FreeListAllocator>;
 
-    using PropagateOnCopyAssignment =
-        typename PoolTraits::propagate_on_container_copy_assignment;
-    using PropagateOnMoveAssignment =
-        typename PoolTraits::propagate_on_container_move_assignment;
+    using PropagateOnCopyAssignment = typename PoolTraits::propagate_on_container_copy_assignment;
+    using PropagateOnMoveAssignment = typename PoolTraits::propagate_on_container_move_assignment;
 
     // ------------------------------------------------------------------ //
-    // 迭代器（双向；跳过空闲槽位）。                                      //
+    // 迭代器（双向；跳过空闲槽位）。                                     //
     // ------------------------------------------------------------------ //
 public:
     // @brief 可变元素的双向迭代器。
@@ -357,22 +341,18 @@ public:
 
     public:
         using iterator_category = std::bidirectional_iterator_tag;
-        using value_type = ObjectPool::value_type;
-        using difference_type = ObjectPool::difference_type;
-        using pointer = ObjectPool::pointer;
-        using reference = ObjectPool::reference;
+        using value_type        = ObjectPool::value_type;
+        using difference_type   = ObjectPool::difference_type;
+        using pointer           = ObjectPool::pointer;
+        using reference         = ObjectPool::reference;
 
         iterator() : Owner(nullptr), Index(0) {}
 
-        reference operator*() const {
-            return *ObjectPoolDetail::getObjectPointer(Owner->Slots[Index].Storage);
-        }
+        reference operator*() const { return *ObjectPoolDetail::getObjectPointer(Owner->Slots[Index].Storage); }
 
-        pointer operator->() const {
-            return ObjectPoolDetail::getObjectPointer(Owner->Slots[Index].Storage);
-        }
+        pointer operator->() const { return ObjectPoolDetail::getObjectPointer(Owner->Slots[Index].Storage); }
 
-        iterator& operator++() {
+        iterator &operator++() {
             advanceToNextOccupied();
             return *this;
         }
@@ -383,7 +363,7 @@ public:
             return Temp;
         }
 
-        iterator& operator--() {
+        iterator &operator--() {
             retreatToPreviousOccupied();
             return *this;
         }
@@ -394,9 +374,7 @@ public:
             return Temp;
         }
 
-        bool operator==(iterator const& Rhs) const {
-            return Owner == Rhs.Owner && Index == Rhs.Index;
-        }
+        bool operator==(iterator const &Rhs) const { return Owner == Rhs.Owner && Index == Rhs.Index; }
         bool operator!=(iterator const& Rhs) const { return !(*this == Rhs); }
 
         // @brief 与 const_iterator 的交叉比较（const_iterator 完整后于类外定义）。
@@ -408,19 +386,16 @@ public:
             : Owner(InOwner), Index(InIndex) {}
 
         void advanceToNextOccupied() {
-            do {
-                ++Index;
-            } while (Index < Owner->Slots.size() && !Owner->isOccupied(Index));
+            do { ++Index; }
+            while (Index < Owner->Slots.size() && !Owner->isOccupied(Index));
         }
 
         void retreatToPreviousOccupied() {
-            do {
-                --Index;
-            } while (Index != static_cast<size_type>(-1) &&
-                     !Owner->isOccupied(Index));
+            do { --Index; }
+            while (Index != static_cast<size_type>(-1) && !Owner->isOccupied(Index));
         }
 
-        ObjectPool* Owner;
+        ObjectPool *Owner;
         size_type Index;
     };
 
@@ -431,25 +406,21 @@ public:
 
     public:
         using iterator_category = std::bidirectional_iterator_tag;
-        using value_type = ObjectPool::value_type;
-        using difference_type = ObjectPool::difference_type;
-        using pointer = ObjectPool::const_pointer;
-        using reference = ObjectPool::const_reference;
+        using value_type        = ObjectPool::value_type;
+        using difference_type   = ObjectPool::difference_type;
+        using pointer           = ObjectPool::const_pointer;
+        using reference         = ObjectPool::const_reference;
 
         const_iterator() : Owner(nullptr), Index(0) {}
 
         // @brief 由可变迭代器隐式转换（iterator 完整后于类外定义）。
         const_iterator(iterator const& Other);
 
-        reference operator*() const {
-            return *ObjectPoolDetail::getObjectPointer(Owner->Slots[Index].Storage);
-        }
+        reference operator*() const { return *ObjectPoolDetail::getObjectPointer(Owner->Slots[Index].Storage); }
 
-        pointer operator->() const {
-            return ObjectPoolDetail::getObjectPointer(Owner->Slots[Index].Storage);
-        }
+        pointer operator->() const { return ObjectPoolDetail::getObjectPointer(Owner->Slots[Index].Storage); }
 
-        const_iterator& operator++() {
+        const_iterator &operator++() {
             advanceToNextOccupied();
             return *this;
         }
@@ -460,7 +431,7 @@ public:
             return Temp;
         }
 
-        const_iterator& operator--() {
+        const_iterator &operator--() {
             retreatToPreviousOccupied();
             return *this;
         }
@@ -471,13 +442,9 @@ public:
             return Temp;
         }
 
-        bool operator==(const_iterator const& Rhs) const {
-            return Owner == Rhs.Owner && Index == Rhs.Index;
-        }
+        bool operator==(const_iterator const &Rhs) const { return Owner == Rhs.Owner && Index == Rhs.Index; }
         bool operator!=(const_iterator const& Rhs) const { return !(*this == Rhs); }
-        bool operator==(iterator const& Rhs) const {
-            return Owner == Rhs.Owner && Index == Rhs.Index;
-        }
+        bool operator==(iterator const& Rhs) const { return Owner == Rhs.Owner && Index == Rhs.Index; }
         bool operator!=(iterator const& Rhs) const { return !(*this == Rhs); }
 
     private:
@@ -487,14 +454,15 @@ public:
         void advanceToNextOccupied() {
             do {
                 ++Index;
-            } while (Index < Owner->Slots.size() && !Owner->isOccupied(Index));
+            }
+            while (Index < Owner->Slots.size() && !Owner->isOccupied(Index));
         }
 
         void retreatToPreviousOccupied() {
             do {
                 --Index;
-            } while (Index != static_cast<size_type>(-1) &&
-                     !Owner->isOccupied(Index));
+            }
+            while (Index != static_cast<size_type>(-1) && !Owner->isOccupied(Index));
         }
 
         ObjectPool const* Owner;
@@ -531,24 +499,21 @@ public:
             emplaceBack(Value);
     }
 
-    ObjectPool(size_type Count, const_reference Value, Allocator const& Alloc)
+    ObjectPool(size_type Count, const_reference Value, Allocator const &Alloc)
         : ObjectPool(Alloc) {
-        for (size_type I = 0; I < Count; ++I)
+        for (size_type I = 0; I < Count; ++I) {
             emplaceBack(Value);
+        }
     }
 
     // @brief 由区间 [First, Last) 构造。
-    template <typename InputIterator,
-              typename = typename std::enable_if<
-                  !std::is_integral<InputIterator>::value>::type>
+    template <typename InputIterator, typename = std::enable_if_t<!std::is_integral_v<InputIterator>>>
     ObjectPool(InputIterator First, InputIterator Last)
         : ObjectPool(Allocator()) {
         appendRange(First, Last);
     }
 
-    template <typename InputIterator,
-              typename = typename std::enable_if<
-                  !std::is_integral<InputIterator>::value>::type>
+    template <typename InputIterator, typename = std::enable_if_t<!std::is_integral_v<InputIterator>>>
     ObjectPool(InputIterator First, InputIterator Last, Allocator const& Alloc)
         : ObjectPool(Alloc) {
         appendRange(First, Last);
@@ -568,22 +533,21 @@ public:
     // @brief 拷贝构造。
     // @notice 分配器经 select_on_container_copy_construction 获取。
     ObjectPool(ObjectPool const& Other)
-        : PoolAllocator(PoolTraits::select_on_container_copy_construction(
-              Other.PoolAllocator)),
-          Slots(SlotAllocator(PoolAllocator)),
-          FreeSlots(FreeListAllocator(PoolAllocator)),
-          LiveSize(0) {
+        : PoolAllocator(PoolTraits::select_on_container_copy_construction(Other.PoolAllocator))
+        , Slots(SlotAllocator(PoolAllocator))
+        , FreeSlots(FreeListAllocator(PoolAllocator))
+        , LiveSize(0) {
         copyElementsFrom(Other);
     }
 
     // @brief 移动构造（分配器可无异常移动时为 noexcept）。
     ObjectPool(ObjectPool&& Other)
-        noexcept(std::is_nothrow_move_constructible<Allocator>::value)
-        : PoolAllocator(std::move(Other.PoolAllocator)),
-          Slots(std::move(Other.Slots)),
-          Occupied(std::move(Other.Occupied)),
-          FreeSlots(std::move(Other.FreeSlots)),
-          LiveSize(Other.LiveSize) {
+        noexcept(std::is_nothrow_move_constructible_v<Allocator>)
+        : PoolAllocator(std::move(Other.PoolAllocator))
+        , Slots(std::move(Other.Slots))
+        , Occupied(std::move(Other.Occupied))
+        , FreeSlots(std::move(Other.FreeSlots))
+        , LiveSize(Other.LiveSize) {
         Other.LiveSize = 0;
     }
 
@@ -591,20 +555,20 @@ public:
 
     // @brief 拷贝赋值，遵循 propagate_on_container_copy_assignment。
     ObjectPool& operator=(ObjectPool const& Other) {
-        if (this != &Other)
+        if (this != &Other) {
             copyAssignImpl(Other, PropagateOnCopyAssignment());
+        }
         return *this;
     }
 
     // @brief 移动赋值，遵循 propagate_on_container_move_assignment。
     ObjectPool& operator=(ObjectPool&& Other)
-        noexcept(PropagateOnMoveAssignment::value ||
-                 std::is_empty<Allocator>::value) {
+        noexcept(PropagateOnMoveAssignment::value || std::is_empty_v<Allocator>) {
         moveAssignImpl(std::move(Other), PropagateOnMoveAssignment());
         return *this;
     }
 
-    ObjectPool& operator=(std::initializer_list<value_type> Init) {
+    ObjectPool &operator=(std::initializer_list<value_type> Init) {
         assign(Init);
         return *this;
     }
@@ -628,69 +592,42 @@ public:
     }
 
     // @brief 无边界检查的元素访问（第 Pos 个有效元素）。
-    reference operator[](size_type Pos) {
-        return const_cast<reference>(
-            static_cast<ObjectPool const&>(*this)[Pos]);
-    }
+    reference operator[](size_type Pos) { return const_cast<reference>(static_cast<ObjectPool const &>(*this)[Pos]); }
 
     const_reference operator[](size_type Pos) const {
-        return *ObjectPoolDetail::getObjectPointer(
-            Slots[findNthOccupied(Pos)].Storage);
+        return *ObjectPoolDetail::getObjectPointer(Slots[findNthOccupied(Pos)].Storage);
     }
 
-    reference front() {
-        return *ObjectPoolDetail::getObjectPointer(
-            Slots[findFirstOccupied()].Storage);
-    }
+    reference front() { return *ObjectPoolDetail::getObjectPointer(Slots[findFirstOccupied()].Storage); }
 
-    const_reference front() const {
-        return *ObjectPoolDetail::getObjectPointer(
-            Slots[findFirstOccupied()].Storage);
-    }
+    const_reference front() const { return *ObjectPoolDetail::getObjectPointer(Slots[findFirstOccupied()].Storage); }
 
-    reference back() {
-        return *ObjectPoolDetail::getObjectPointer(
-            Slots[findLastOccupied()].Storage);
-    }
+    reference back() { return *ObjectPoolDetail::getObjectPointer(Slots[findLastOccupied()].Storage); }
 
-    const_reference back() const {
-        return *ObjectPoolDetail::getObjectPointer(
-            Slots[findLastOccupied()].Storage);
-    }
+    const_reference back() const { return *ObjectPoolDetail::getObjectPointer(Slots[findLastOccupied()].Storage); }
 
     // ------------------------------------------------------------------ //
     // 迭代器。                                                            //
     // ------------------------------------------------------------------ //
     iterator begin() { return iterator(this, findFirstOccupied()); }
-    const_iterator begin() const {
-        return const_iterator(this, findFirstOccupied());
-    }
-    const_iterator cbegin() const {
-        return const_iterator(this, findFirstOccupied());
-    }
+    const_iterator begin() const  { return const_iterator(this, findFirstOccupied()); }
+    const_iterator cbegin() const { return const_iterator(this, findFirstOccupied()); }
 
     iterator end() { return iterator(this, Slots.size()); }
     const_iterator end() const { return const_iterator(this, Slots.size()); }
     const_iterator cend() const { return const_iterator(this, Slots.size()); }
 
     reverse_iterator rbegin() { return reverse_iterator(end()); }
-    const_reverse_iterator rbegin() const {
-        return const_reverse_iterator(end());
-    }
-    const_reverse_iterator crbegin() const {
-        return const_reverse_iterator(cend());
-    }
+    const_reverse_iterator rbegin() const { return const_reverse_iterator(end()); }
+    const_reverse_iterator crbegin() const { return const_reverse_iterator(cend()); }
+
 
     reverse_iterator rend() { return reverse_iterator(begin()); }
-    const_reverse_iterator rend() const {
-        return const_reverse_iterator(begin());
-    }
-    const_reverse_iterator crend() const {
-        return const_reverse_iterator(cbegin());
-    }
+    const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
+    const_reverse_iterator crend() const { return const_reverse_iterator(cbegin()); }
 
     // ------------------------------------------------------------------ //
-    // 容量。                                                              //
+    // 容量                                                              //
     // ------------------------------------------------------------------ //
 #if defined(__has_cpp_attribute)
 #if __has_cpp_attribute(nodiscard) >= 201907L
@@ -702,9 +639,7 @@ public:
     // @brief 有效元素个数。
     size_type size() const { return LiveSize; }
 
-    size_type max_size() const {
-        return std::min(Slots.max_size(), FreeSlots.max_size());
-    }
+    size_type max_size() const { return std::min(Slots.max_size(), FreeSlots.max_size()); }
 
     // @brief 槽位总数（占用 + 空闲），即底层存储大小。
     size_type capacity() const { return Slots.size(); }
@@ -716,11 +651,14 @@ public:
     // @param NewCapacity 目标槽位总数
     void reserve(size_type NewCapacity) {
         size_type OldSize = Slots.size();
-        while (Slots.size() < NewCapacity)
+        while (Slots.size() < NewCapacity) {
             Slots.emplace_back();
+        }
+
         // @notice 新增槽位逆序入栈，使 LIFO 弹出为正向（旧槽位 -> 新槽位）。
-        for (size_type I = Slots.size(); I > OldSize; --I)
+        for (size_type I = Slots.size(); I > OldSize; --I) {
             FreeSlots.push_back(I - 1);
+        }
         resizeOccupied();
     }
 
@@ -741,13 +679,13 @@ public:
 
         size_type Write = 0;
         for (size_type Read = 0; Read < Slots.size(); ++Read) {
-            if (!isOccupied(Read))
+            if (!isOccupied(Read)) {
                 continue;
+            }
             if (Read != Write) {
                 ObjectPoolDetail::constructInStorage(
                     Slots[Write].Storage,
-                    std::move(*ObjectPoolDetail::getObjectPointer(
-                        Slots[Read].Storage)));
+                    std::move(*ObjectPoolDetail::getObjectPointer(Slots[Read].Storage)));
                 setOccupied(Write, true);
                 ObjectPoolDetail::destroyInStorage(Slots[Read].Storage);
                 setOccupied(Read, false);
@@ -775,8 +713,7 @@ public:
         FreeSlots.clear();
         FreeSlots.reserve(Slots.size());
         // @notice 逆序入栈，使后续 fill/append 为正向（槽位 0,1,2,...）。
-        for (size_type I = Slots.size(); I > 0; --I)
-            FreeSlots.push_back(I - 1);
+        for (size_type I = Slots.size(); I > 0; --I) { FreeSlots.push_back(I - 1); }
     }
 
     void pushBack(const_reference Value) { emplaceBack(Value); }
@@ -787,21 +724,17 @@ public:
     // @return 新元素的引用
     // @notice 构造抛异常时回滚（槽位保持空闲），保证强异常安全。
     template <typename... Args>
-    reference emplaceBack(Args&&... Arguments) {
-        return *ObjectPoolDetail::getObjectPointer(
-            Slots[emplaceIntoFreeSlot(std::forward<Args>(Arguments)...)].Storage);
+    reference emplaceBack(Args&&... Arguments)
+    {
+        return *ObjectPoolDetail::getObjectPointer(Slots[emplaceIntoFreeSlot(std::forward<Args>(Arguments)...)].Storage);
     }
 
     // @brief 追加元素并返回指向它的迭代器（稳定，可作为外部映射句柄）。
     // @param Value 追加的值
     // @return 指向新元素的迭代器
     // @notice 结合 getSlotIndex 可实现 Key -> SlotId -> Value 映射。
-    iterator append(const_reference Value) {
-        return iterator(this, emplaceIntoFreeSlot(Value));
-    }
-    iterator append(value_type&& Value) {
-        return iterator(this, emplaceIntoFreeSlot(std::move(Value)));
-    }
+    iterator append(const_reference Value) { return iterator(this, emplaceIntoFreeSlot(Value)); }
+    iterator append(value_type&& Value) { return iterator(this, emplaceIntoFreeSlot(std::move(Value))); }
 
     // @brief 删除最后一个有效元素。
     void popBack() {
@@ -838,18 +771,22 @@ public:
 
     // @brief 调整有效元素个数；增长时默认插入。
     void resize(size_type Count) {
-        while (LiveSize < Count)
+        while (LiveSize < Count) {
             emplaceBack();
-        while (LiveSize > Count)
+        }
+        while (LiveSize > Count) {
             popBack();
+        }
     }
 
     // @brief 调整有效元素个数；增长时插入 Value 的副本。
     void resize(size_type Count, const_reference Value) {
-        while (LiveSize < Count)
+        while (LiveSize < Count) {
             emplaceBack(Value);
-        while (LiveSize > Count)
+        }
+        while (LiveSize > Count) {
             popBack();
+        }
     }
 
     // @brief 以 Count 个 Value 副本重新赋值。
@@ -858,14 +795,13 @@ public:
         FreeSlots.clear();
         resizeOccupied();
         LiveSize = 0;
-        for (size_type I = 0; I < Count; ++I)
-            emplaceBack(Value);
+        for (size_type I = 0; I < Count; ++I) { emplaceBack(Value); }
     }
 
     // @brief 以区间 [First, Last) 重新赋值。
     template <typename InputIterator>
-    typename std::enable_if<!std::is_integral<InputIterator>::value>::type
-    assign(InputIterator First, InputIterator Last) {
+    auto assign(InputIterator First, InputIterator Last)
+        -> std::enable_if_t<!std::is_integral_v<InputIterator>> {
         Slots.clear();
         FreeSlots.clear();
         resizeOccupied();
@@ -873,17 +809,15 @@ public:
         appendRange(First, Last);
     }
 
-    void assign(std::initializer_list<value_type> Init) {
-        assign(Init.begin(), Init.end());
-    }
+    void assign(std::initializer_list<value_type> Init) { assign(Init.begin(), Init.end()); }
 
     // @brief 从区间 [First, Last) 批量刷入元素，复用空闲槽位（不触发池内存分配）。
     // @param First, Last 输入区间
     // @return 刷入的元素个数
     // @notice 空闲槽位不足时抛 std::length_error（已刷入的部分保留）。
-    template <typename InputIterator>
-    typename std::enable_if<!std::is_integral<InputIterator>::value, size_type>::type
-    fill(InputIterator First, InputIterator Last) {
+    template<typename InputIterator>
+    auto fill(InputIterator First, InputIterator Last)
+        -> std::enable_if_t<!std::is_integral_v<InputIterator>, size_type> {
         size_type Count = 0;
         for (; First != Last; ++First) {
             fillOne(*First);
@@ -897,13 +831,12 @@ public:
     // @param Value 刷入的值
     // @return 刷入的元素个数
     size_type fill(size_type Count, const_reference Value) {
-        for (size_type I = 0; I < Count; ++I)
-            fillOne(Value);
+        for (size_type I = 0; I < Count; ++I) { fillOne(Value); }
         return Count;
     }
 
     // @brief 交换内容与分配器（遵循 propagate_on_container_swap）。
-    void swap(ObjectPool& Other) {
+    void swap(ObjectPool &Other) noexcept {
         using std::swap;
         swap(PoolAllocator, Other.PoolAllocator);
         swap(Slots, Other.Slots);
@@ -928,32 +861,18 @@ private:
     // 内部辅助。                                                          //
     // ------------------------------------------------------------------ //
     // @brief 占用标志读取（按类型分派：平凡类型读位图，非平凡类型读槽位内标志）。
-    bool isOccupied(size_type Index) const {
-        return isOccupiedImpl(Index, IsTrivialType());
-    }
-    bool isOccupiedImpl(size_type Index, std::true_type) const {
-        return Occupied[Index];
-    }
-    bool isOccupiedImpl(size_type Index, std::false_type) const {
-        return Slots[Index].bOccupied;
-    }
+    bool isOccupied(size_type Index) const { return isOccupiedImpl(Index, IsTrivialType()); }
+    bool isOccupiedImpl(size_type Index, std::true_type) const { return Occupied[Index]; }
+    bool isOccupiedImpl(size_type Index, std::false_type) const { return Slots[Index].IsOccupied; }
 
     // @brief 占用标志写入（按类型分派）。
-    void setOccupied(size_type Index, bool Value) {
-        setOccupiedImpl(Index, Value, IsTrivialType());
-    }
-    void setOccupiedImpl(size_type Index, bool Value, std::true_type) {
-        Occupied[Index] = Value;
-    }
-    void setOccupiedImpl(size_type Index, bool Value, std::false_type) {
-        Slots[Index].bOccupied = Value;
-    }
+    void setOccupied(size_type Index, bool Value) { setOccupiedImpl(Index, Value, IsTrivialType()); }
+    void setOccupiedImpl(size_type Index, bool Value, std::true_type) { Occupied[Index] = Value; }
+    void setOccupiedImpl(size_type Index, bool Value, std::false_type) { Slots[Index].IsOccupied = Value; }
 
     // @brief 使占用位图大小与槽位存储对齐（平凡类型专用；非平凡类型为空操作）。
     void resizeOccupied() { resizeOccupiedImpl(IsTrivialType()); }
-    void resizeOccupiedImpl(std::true_type) {
-        Occupied.resize(Slots.size(), false);
-    }
+    void resizeOccupiedImpl(std::true_type) { Occupied.resize(Slots.size(), false); }
     void resizeOccupiedImpl(std::false_type) {}
 
     template <typename InputIterator>
@@ -1261,12 +1180,12 @@ public:
         void advanceToNextOccupied() {
             do {
                 ++It;
-            } while (It != Owner->Slots.end() && !It->bOccupied);
+            } while (It != Owner->Slots.end() && !It->IsOccupied);
         }
         void retreatToPreviousOccupied() {
             do {
                 --It;
-            } while (It != Owner->Slots.begin() && !It->bOccupied);
+            } while (It != Owner->Slots.begin() && !It->IsOccupied);
         }
 
         ObjectPool* Owner;
@@ -1330,12 +1249,12 @@ public:
         void advanceToNextOccupied() {
             do {
                 ++It;
-            } while (It != Owner->Slots.end() && !It->bOccupied);
+            } while (It != Owner->Slots.end() && !It->IsOccupied);
         }
         void retreatToPreviousOccupied() {
             do {
                 --It;
-            } while (It != Owner->Slots.begin() && !It->bOccupied);
+            } while (It != Owner->Slots.begin() && !It->IsOccupied);
         }
 
         ObjectPool const* Owner;
@@ -1520,9 +1439,9 @@ public:
 
     void clear() {
         for (SlotIterator It = Slots.begin(); It != Slots.end(); ++It) {
-            if (It->bOccupied) {
+            if (It->IsOccupied) {
                 ObjectPoolDetail::destroyInStorage(It->Storage);
-                It->bOccupied = false;
+                It->IsOccupied = false;
             }
         }
         LiveSize = 0;
@@ -1558,7 +1477,7 @@ public:
     iterator erase(const_iterator Pos) {
         SlotIterator It = Pos.It;
         ObjectPoolDetail::destroyInStorage(It->Storage);
-        It->bOccupied = false;
+        It->IsOccupied = false;
         FreeSlots.push_back(It);
         --LiveSize;
         return iterator(this, findNextOccupied(It));
@@ -1570,9 +1489,9 @@ public:
         while (It != Stop) {
             SlotIterator Next = It;
             ++Next;
-            if (It->bOccupied) {
+            if (It->IsOccupied) {
                 ObjectPoolDetail::destroyInStorage(It->Storage);
-                It->bOccupied = false;
+                It->IsOccupied = false;
                 FreeSlots.push_back(It);
                 --LiveSize;
             }
@@ -1662,7 +1581,7 @@ private:
             markSlotFree(It);
             throw;
         }
-        SlotRef.bOccupied = true;
+        SlotRef.IsOccupied = true;
         ++LiveSize;
         return It;
     }
@@ -1677,7 +1596,7 @@ private:
             markSlotFree(It);
             throw;
         }
-        SlotRef.bOccupied = true;
+        SlotRef.IsOccupied = true;
         ++LiveSize;
     }
 
@@ -1751,7 +1670,7 @@ private:
     }
 
     void markSlotFree(SlotIterator It) {
-        It->bOccupied = false;
+        It->IsOccupied = false;
         FreeSlots.push_back(It);
     }
 
@@ -1765,7 +1684,7 @@ private:
         container_type& MutableSlots = const_cast<container_type&>(Slots);
         for (SlotIterator It = MutableSlots.begin();
              It != MutableSlots.end(); ++It)
-            if (It->bOccupied)
+            if (It->IsOccupied)
                 return It;
         return MutableSlots.end();
     }
@@ -1775,7 +1694,7 @@ private:
         SlotIterator It = MutableSlots.end();
         while (It != MutableSlots.begin()) {
             --It;
-            if (It->bOccupied)
+            if (It->IsOccupied)
                 return It;
         }
         return MutableSlots.end();
@@ -1785,7 +1704,7 @@ private:
         SlotIterator End = endSlot();
         do {
             ++From;
-        } while (From != End && !From->bOccupied);
+        } while (From != End && !From->IsOccupied);
         return From;
     }
 
@@ -2170,7 +2089,7 @@ private:
         return Occupied[Index];
     }
     bool isOccupiedImpl(size_type Index, std::false_type) const {
-        return Slots[Index].bOccupied;
+        return Slots[Index].IsOccupied;
     }
 
     void setOccupied(size_type Index, bool Value) {
@@ -2180,7 +2099,7 @@ private:
         Occupied[Index] = Value;
     }
     void setOccupiedImpl(size_type Index, bool Value, std::false_type) {
-        Slots[Index].bOccupied = Value;
+        Slots[Index].IsOccupied = Value;
     }
 
     // @brief 取得一个空闲槽位下标；满时抛 std::length_error。

@@ -1,25 +1,23 @@
-//
-// Created by Lzorn on 2026/11/20.
-//
-// LinkedHashTable — a high-performance, std::unordered_map-compatible hash table.
-//
-//   * Lookup uses open addressing with linear probing, accelerated by 7-bit
-//     fingerprint filtering over SIMD 16-slot control-byte groups
-//     (Swiss-table style), so a probe rejects most keys without a KeyEqual call.
-//   * Insertion order is preserved by an intrusive doubly-linked list, giving
-//     O(1) begin()/end() iteration, stable iteration order, and O(1) erasure by
-//     iterator without invalidating other iterators.
-//   * Erasure uses backward-shift deletion, so the table never accumulates
-//     tombstones and stays dense.
-//
-// The user-provided hash is passed through a splitmix64/murmur3 finalizer so the
-// table stays well distributed even for weak hashes (e.g. the identity hash that
-// std::hash<size_t> commonly is) under power-of-two bucket counts.
-//
-// Naming follows the project convention (verb-first lower camelCase). The few
-// names that must match the standard library for ranges/algorithms interop —
-// begin/end/cbegin/cend/rbegin/rend, size/empty, swap — keep their std spelling.
-//
+/**
+ * @file LinkedHashTable.hpp
+ * @brief 高性能、兼容 std::unordered_map 的哈希表。
+ *
+ *   * 查找采用开放寻址 + 线性探测，并通过 16 槽控制字节组上的 7 位指纹过滤
+ *     （Swiss-table 风格）做 SIMD 加速，使一次探测即可在不调用 KeyEqual 的
+ *     前提下排除绝大多数键。
+ *   * 插入顺序由侵入式双向链表保持，因此 begin()/end() 迭代为 O(1)、迭代顺序
+ *     稳定，且可按迭代器 O(1) 删除而不使其它迭代器失效。
+ *   * 删除采用向后移位（backward-shift deletion），因此表不会累积墓碑，始终
+ *     保持稠密。
+ *
+ * 用户提供的哈希会经过 splitmix64/murmur3 终结器（finalizer），使表即使在
+ * 2 的幂桶数下、面对弱哈希（例如 std::hash<size_t> 常见的恒等哈希）也能保持
+ * 良好分布。
+ *
+ * 命名遵循项目约定（动词开头的小驼峰）。少数必须与标准库匹配、以便与
+ * range/算法互操作的名字 —— begin/end/cbegin/cend/rbegin/rend、size/empty、
+ * swap —— 保留其标准拼写。
+ */
 
 #ifndef PICTOR_LINKEDHASHTABLE_H
 #define PICTOR_LINKEDHASHTABLE_H
@@ -47,11 +45,10 @@ template <
 >
 class LinkedHashTable
 {
-    // nodes -----------------------------------------------------------------
-    // The doubly-linked list links live in a base subobject so the end marker
-    // (Sentinel) never has to construct a `std::pair<const Key, T>`. This keeps
-    // the table usable with non-default-constructible key/value types, matching
-    // the std::unordered_map requirement.
+    // 节点 -----------------------------------------------------------------
+    // 双向链表的链接指针放在基类子对象中，使末尾哨兵（Sentinel）无需构造
+    // `std::pair<const Key, T>`。这使得表可用于键/值类型不可默认构造的情形，
+    // 与 std::unordered_map 的要求一致。
     struct NodeBase
     {
         NodeBase* Next = nullptr;
@@ -95,7 +92,7 @@ public:
     using pointer         = typename std::allocator_traits<Allocator>::pointer;
     using const_pointer   = typename std::allocator_traits<Allocator>::const_pointer;
 
-    // iterator --------------------------------------------------------------
+    // 迭代器 --------------------------------------------------------------
     template <bool IsConst>
     class Iterator
     {
@@ -130,7 +127,7 @@ public:
         Iterator& operator--() noexcept { Current = Current->Prev; return *this; }
         Iterator  operator--(int) noexcept { Iterator Tmp = *this; --*this; return Tmp; }
 
-        // Mixed const/non-const comparisons (std::unordered_map interoperability).
+        // 混合 const/非 const 比较（与 std::unordered_map 互操作）。
         template <bool OtherConst>
         bool operator==(const Iterator<OtherConst>& Other) const noexcept { return Current == Other.Current; }
         template <bool OtherConst>
@@ -142,11 +139,10 @@ public:
     using reverse_iterator       = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
-    // local iterator --------------------------------------------------------
-    // Iterates the elements of a single bucket (elements whose home slot is n).
-    // Open addressing scatters a bucket's elements, so this filters the global
-    // insertion-order list. It is a forward iterator, as std::unordered_map
-    // requires of local_iterator.
+    // 局部迭代器 --------------------------------------------------------
+    // 迭代单个桶（home slot 为 n）的元素。开放寻址会将一个桶的元素分散到
+    // 探测序列中，因此这里在全局插入顺序链表上做过滤。它是前向迭代器，与
+    // std::unordered_map 对 local_iterator 的要求一致。
     template <bool IsConst>
     class LocalIterator
     {
@@ -166,7 +162,7 @@ public:
         {
         }
 
-        // Advance until Current is the sentinel or a node whose home is BucketIndex.
+        // 前进直到 Current 为哨兵，或指向 home 为 BucketIndex 的节点。
         void advanceToMatch() noexcept
         {
             while (Current != &Owner->Sentinel &&
@@ -218,7 +214,7 @@ public:
     using local_iterator       = LocalIterator<false>;
     using const_local_iterator = LocalIterator<true>;
 
-    // construction ---------------------------------------------------------
+    // 构造 ---------------------------------------------------------
     LinkedHashTable()
         : LinkedHashTable(0, Hash{}, KeyEqual{}, Allocator{}) {}
 
@@ -255,10 +251,9 @@ public:
         deallocateBuckets();
     }
 
-    // Copy assignment: build a copy of the target allocator and swap it in.
-    // This gives the strong guarantee and correct allocator propagation for
-    // always-equal allocators (std::allocator); for stateful non-propagating
-    // allocators we copy element-wise using our own allocator.
+    // 拷贝赋值：先拷贝目标分配器构造副本再交换进来。对 always-equal 分配器
+    // （std::allocator）给出强异常保证并正确处理分配器传播；对有状态且不传播
+    // 的分配器，则用自身分配器逐元素拷贝。
     LinkedHashTable& operator=(const LinkedHashTable& Other)
     {
         if (this == &Other)
@@ -274,7 +269,7 @@ public:
         }
         else
         {
-            // Keep our allocator; copy Other's policy and elements into a temp.
+            // 保留自身分配器；把 Other 的策略与元素拷贝进临时对象。
             LinkedHashTable Tmp(0, Other.Hasher, Other.Equal, Alloc);
             Tmp.copyFrom(Other);
             swap(Tmp);
@@ -300,7 +295,7 @@ public:
         return *this;
     }
 
-    // iterators -------------------------------------------------------------
+    // 迭代器 -------------------------------------------------------------
     iterator begin() noexcept { return iterator(Sentinel.Next); }
     const_iterator begin() const noexcept { return const_iterator(Sentinel.Next); }
     const_iterator cbegin() const noexcept { return begin(); }
@@ -315,7 +310,7 @@ public:
     const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
     const_reverse_iterator crend() const noexcept { return rend(); }
 
-    // ------------------------------------------------------------- capacity
+    // ------------------------------------------------------------- 容量
     [[nodiscard]] bool empty() const noexcept { return ElementCount == 0; }
     [[nodiscard]] size_type size() const noexcept { return ElementCount; }
     [[nodiscard]] size_type getMaxSize() const noexcept
@@ -323,7 +318,7 @@ public:
         return NodeAllocTraits::max_size(NodeAllocator{Alloc});
     }
 
-    // modifiers ------------------------------------------------------------
+    // 修改器 ------------------------------------------------------------
     void clear() noexcept
     {
         NodeBase* Curr = Sentinel.Next;
@@ -453,7 +448,7 @@ public:
         relinkAfterSwap(Other);
     }
 
-    // lookup ---------------------------------------------------------------
+    // 查找 ---------------------------------------------------------------
     iterator find(const key_type& KeyValue)
     {
         Node* Found = findNode(KeyValue);
@@ -497,7 +492,7 @@ public:
         return tryEmplace(std::move(KeyValue)).first->second;
     }
 
-    // hash policy ----------------------------------------------------------
+    // 哈希策略 ----------------------------------------------------------
     [[nodiscard]] float getLoadFactor() const noexcept
     {
         return BucketCount
@@ -574,9 +569,8 @@ public:
     [[nodiscard]] allocator_type getAllocator() const noexcept { return Alloc; }
 
 private:
-    // --------------------------------------------------------------- hashing
-    // Finalizer spreads entropy so weak hashes (identity, strided, ...) still
-    // distribute well under power-of-two bucket counts.
+    // --------------------------------------------------------------- 哈希
+    // 终结器扩散熵，使弱哈希（恒等、步进等）在 2 的幂桶数下仍能良好分布。
     static constexpr size_type mixHash(size_type X) noexcept
     {
         if constexpr (sizeof(size_type) == 8)
@@ -602,19 +596,19 @@ private:
         return mixHash(Hasher(KeyValue));
     }
 
-    // Top 7 bits of the (mixed) hash: 0..127, never the 0xFF empty marker.
+    // 取（混合后）哈希的高 7 位：0..127，永不为 0xFF 空标记。
     static constexpr std::uint8_t fingerprintOf(size_type HashValue) noexcept
     {
         return static_cast<std::uint8_t>(HashValue >> (sizeof(size_type) * 8 - 7));
     }
 
-    // Home slot of a live node (used by getBucketSize / bucket iterators).
+    // 存活节点的 home slot（供 getBucketSize / 桶迭代器使用）。
     [[nodiscard]] size_type bucketOfNode(const Node* N) const
     {
         return hashKey(N->Value.first) & (BucketCount - 1);
     }
 
-    // Mask of control-byte slots at or after `From` within a 16-slot group.
+    // 16 槽组内位于 `From` 及其之后的控制字节槽位掩码。
     static constexpr MaskType tailMask(size_t From) noexcept
     {
         return static_cast<MaskType>(~((MaskType{1} << From) - 1));
@@ -648,7 +642,7 @@ private:
         return SlotIndex % GroupSize;
     }
 
-    // ------------------------------------------------------------ allocation
+    // ------------------------------------------------------------ 分配
     void allocateBuckets(size_type Count)
     {
         BucketCount = roundupPowerOfTwo(Count);
@@ -665,7 +659,7 @@ private:
             NewGroups = GroupAllocTraits::allocate(GroupAlloc, GroupCount);
             for (size_type I = 0; I < GroupCount; ++I)
             {
-                GroupAllocTraits::construct(GroupAlloc, NewGroups + I); // default ctor => empty
+                GroupAllocTraits::construct(GroupAlloc, NewGroups + I); // 默认构造 => 空
             }
         }
         catch (...)
@@ -716,14 +710,14 @@ private:
     void updateGrowthThreshold() noexcept
     {
         GrowthThreshold = static_cast<size_type>(static_cast<double>(BucketCount) * MaxLoadFactor);
-        // Always keep at least one empty slot so probes terminate.
+        // 始终至少保留一个空槽，以保证探测能终止。
         if (GrowthThreshold >= BucketCount)
         {
             GrowthThreshold = BucketCount - 1;
         }
     }
 
-    // -------------------------------------------------------------- find/insert
+    // -------------------------------------------------------------- 查找/插入
     Node* findNode(const key_type& KeyValue) const
     {
         const size_type H = hashKey(KeyValue);
@@ -808,10 +802,9 @@ private:
         throw std::overflow_error("LinkedHashTable: no empty slot");
     }
 
-    // --------------------------------------------------------------- erasure
-    // Backward-shift deletion keeps the probe clusters contiguous without
-    // tombstones. For each successor, recompute its home; move it into the gap
-    // only when its home is at-or-before the gap in cyclic probe order.
+    // --------------------------------------------------------------- 删除
+    // 向后移位删除：无需墓碑即可保持探测簇连续。对每个后继元素重新计算其
+    // home；仅当其在循环探测序上位于空洞处或之前时，才将其移入空洞。
     void eraseFromBuckets(Node* Target)
     {
         const size_type Mask = BucketCount - 1;
@@ -848,7 +841,7 @@ private:
         --ElementCount;
     }
 
-    // ---------------------------------------------------------------- rehash
+    // ---------------------------------------------------------------- 重哈希
     void rehashImpl(size_type NewBucketCount)
     {
         NewBucketCount = roundupPowerOfTwo(NewBucketCount);
@@ -907,7 +900,7 @@ private:
             throw;
         }
 
-        // Commit.
+        // 提交。
         Node** OldBuckets = Buckets;
         SIMDControlByte* OldGroups = Groups;
         const size_type OldCount = BucketCount;
@@ -936,7 +929,7 @@ private:
         }
     }
 
-    // ------------------------------------------------------------ node alloc
+    // ------------------------------------------------------------ 节点分配
     template <typename K, typename... Args>
     Node* allocateNode(K&& KeyValue, Args&&... Args_)
     {
@@ -965,7 +958,7 @@ private:
         NodeAllocTraits::deallocate(NodeAlloc, P, 1);
     }
 
-    // linked-list ops --------------------------------------------------------
+    // 链表操作 --------------------------------------------------------
     void linkTail(NodeBase* Target) noexcept
     {
         Target->Prev = Sentinel.Prev;
@@ -982,7 +975,7 @@ private:
         Target->Prev = nullptr;
     }
 
-    // ownership -------------------------------------------------------------
+    // 所有权 -------------------------------------------------------------
     void copyFrom(const LinkedHashTable& Other)
     {
         allocateBuckets(Other.BucketCount == 0 ? 16 : Other.BucketCount);
@@ -1045,8 +1038,8 @@ private:
         Other.Sentinel.Prev = &Other.Sentinel;
     }
 
-    // `swap` exchanges the array pointers and counters but each object's Sentinel
-    // is a fixed subobject, so the lists must be re-linked to their new owner.
+    // `swap` 交换了数组指针与计数器，但每个对象的 Sentinel 是固定子对象，
+    // 因此链表必须重新链接到各自新的所有者。
     void relinkAfterSwap(LinkedHashTable& Other) noexcept
     {
         NodeBase* const AHead = Sentinel.Next;
@@ -1086,7 +1079,7 @@ private:
     KeyEqual Equal;
     Allocator Alloc;
 
-    NodeBase Sentinel;                 // end marker; carries links only, no value
+    NodeBase Sentinel;                 // 末尾哨兵；仅携带链接指针，无值
     Node** Buckets = nullptr;
     SIMDControlByte* Groups = nullptr;
     size_type BucketCount = 0;

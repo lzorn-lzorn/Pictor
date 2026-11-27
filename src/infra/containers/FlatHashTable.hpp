@@ -1,24 +1,21 @@
-//
-// Created by Lzorn on 2026/11/26.
-//
-// FlatHashTable — a flat (open-addressing) hash map: the fastest drop-in for
-// LinkedHashTable when iteration-order stability is not needed.
-//
-//   * Values live inline in one contiguous slot array (no per-node allocation,
-//     no pointer chasing). Lookup probes with linear probing accelerated by
-//     7-bit SIMD fingerprint groups, exactly like LinkedHashTable.
-//   * insert/tryEmplace construct the value directly in the found empty slot:
-//     zero per-element allocation. Erasure uses backward-shift deletion that
-//     moves values to keep clusters contiguous (no tombstones, no frees).
-//   * Iteration walks the slot array in memory order (order is unspecified and
-//     differs from insertion order). Iterators/pointers/references are
-//     invalidated by insert (rehash) and by erase, per flat-map convention.
-//   * Keys must be movable-or-copyable so shift-erase/rehash can relocate them.
-//
-// Public interface, naming convention and std/ranges interop points match
-// LinkedHashTable. The user hash is passed through a splitmix64/murmur3
-// finalizer so weak hashes (e.g. identity std::hash<size_t>) stay distributed.
-//
+/**
+ * @file FlatHashTable.hpp
+ * @brief 扁平（开放寻址）哈希映射：在不需要迭代顺序稳定时，作为 LinkedHashTable
+ *        最快的直接替代。
+ *
+ *   * 值内联存放在一个连续槽位数组中（无逐节点分配、无指针追踪）。查找采用
+ *     线性探测，并通过 7 位 SIMD 指纹组加速，与 LinkedHashTable 完全一致。
+ *   * insert/tryEmplace 直接在找到的空槽中构造值：零逐元素分配。删除采用
+ *     向后移位（backward-shift deletion），搬移值以保持探测簇连续（无墓碑、
+ *     无释放）。
+ *   * 迭代按内存顺序遍历槽位数组（顺序未指定，与插入顺序不同）。按扁平映射
+ *     的约定，insert（重哈希）与 erase 会使迭代器/指针/引用失效。
+ *   * 键必须可移动或可拷贝，以便移位删除/重哈希能搬移它们。
+ *
+ * 公共接口、命名约定以及与 std/range 的互操作点均与 LinkedHashTable 一致。
+ * 用户哈希经过 splitmix64/murmur3 终结器，使弱哈希（例如恒等 std::hash<size_t>）
+ * 保持良好分布。
+ */
 
 #ifndef PICTOR_FLATHASHTABLE_H
 #define PICTOR_FLATHASHTABLE_H
@@ -46,11 +43,10 @@ template <
 >
 class FlatHashTable
 {
-    // The slot stores a non-const Key so backward-shift erasure can move-assign
-    // whole slots. The public value_type (pair<const Key, T>) has an identical
-    // layout on all supported ABIs; iterators expose slots through
-    // reinterpret_cast, guarded by these asserts (same technique as abseil /
-    // ankerl flat maps).
+    // 槽位存放非 const 的 Key，以便向后移位删除能整体移动赋值槽位。公共
+    // value_type（pair<const Key, T>）在所有支持的 ABI 上布局完全相同；迭代器
+    // 通过 reinterpret_cast 暴露槽位，并由这些 static_assert 守护（与 abseil /
+    // ankerl 扁平映射相同的技巧）。
     using SlotPair = std::pair<Key, T>;
 
     using SlotAllocator     = typename std::allocator_traits<Allocator>::template rebind_alloc<SlotPair>;
@@ -80,9 +76,8 @@ public:
     static_assert(alignof(SlotPair) == alignof(value_type),
         "FlatHashTable: pair<Key,T> and pair<const Key,T> alignments differ — unsupported");
 
-    // -------------------------------------------------------------- iterator
-    // Iterates occupied slots in memory order. Inserts and erases may invalidate
-    // iterators (flat-map convention).
+    // -------------------------------------------------------------- 迭代器
+    // 按内存顺序迭代被占用的槽位。insert 与 erase 可能使迭代器失效（扁平映射约定）。
     template <bool IsConst>
     class Iterator
     {
@@ -153,8 +148,8 @@ public:
     using reverse_iterator       = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
-    // local iterator -------------------------------------------------------- 
-    // Iterates elements whose home slot is N (forward iterator, matching LinkedHashTable's bucket iterators).
+    // 局部迭代器 --------------------------------------------------------
+    // 迭代 home slot 为 N 的元素（前向迭代器，与 LinkedHashTable 的桶迭代器一致）。
     template <bool IsConst>
     class LocalIterator
     {
@@ -222,7 +217,7 @@ public:
     using local_iterator       = LocalIterator<false>;
     using const_local_iterator = LocalIterator<true>;
 
-    // construction --------------------------------------------------------- 
+    // 构造 ---------------------------------------------------------
     FlatHashTable()
         : FlatHashTable(0, Hash{}, KeyEqual{}, Allocator{}) {}
 
@@ -270,7 +265,7 @@ public:
         }
         else
         {
-            // Keep our allocator; copy Other's policy and elements into a temp.
+            // 保留自身分配器；把 Other 的策略与元素拷贝进临时对象。
             FlatHashTable Tmp(0, Other.Hasher, Other.Equal, Alloc);
             Tmp.copyFrom(Other);
             swap(Tmp);
@@ -296,7 +291,7 @@ public:
         return *this;
     }
 
-    // ------------------------------------------------------------- iterators
+    // ------------------------------------------------------------- 迭代器
     iterator begin() noexcept
     {
         iterator It(this, Slots);
@@ -321,7 +316,7 @@ public:
     const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
     const_reverse_iterator crend() const noexcept { return rend(); }
 
-    // ------------------------------------------------------------- capacity
+    // ------------------------------------------------------------- 容量
     [[nodiscard]] bool empty() const noexcept { return ElementCount == 0; }
     [[nodiscard]] size_type size() const noexcept { return ElementCount; }
     [[nodiscard]] size_type getMaxSize() const noexcept
@@ -329,7 +324,7 @@ public:
         return SlotAllocTraits::max_size(SlotAllocator{Alloc});
     }
 
-    // ------------------------------------------------------------ modifiers
+    // ------------------------------------------------------------ 修改器
     void clear() noexcept
     {
         for (size_type I = 0; I < BucketCount; ++I)
@@ -430,9 +425,8 @@ public:
         return 1;
     }
 
-    // Removes [First, Last) in slot order. Erasing right-to-left keeps every
-    // position below the current one untouched, so each erase hits the original
-    // element of the range.
+    // 按槽位顺序删除 [First, Last)。从右向左删除可保证当前元素以下的每个位置
+    // 都不受影响，因此每次删除都命中区间内原本的元素。
     iterator erase(const_iterator First, const_iterator Last)
     {
         const auto FirstPos = static_cast<size_type>(First.Current - Slots);
@@ -467,7 +461,7 @@ public:
         swap(MaxLoadFactor, Other.MaxLoadFactor);
     }
 
-    // --------------------------------------------------------------- lookup
+    // --------------------------------------------------------------- 查找
     iterator find(const key_type& KeyValue)
     {
         SlotPair* Found = findSlot(KeyValue);
@@ -511,7 +505,7 @@ public:
         return tryEmplace(std::move(KeyValue)).first->second;
     }
 
-    // ---------------------------------------------------------- hash policy
+    // ---------------------------------------------------------- 哈希策略
     [[nodiscard]] float getLoadFactor() const noexcept
     {
         return BucketCount
@@ -594,9 +588,8 @@ public:
     [[nodiscard]] allocator_type getAllocator() const noexcept { return Alloc; }
 
 private:
-    // hashing --------------------------------------------------------------- 
-    // Finalizer spreads entropy so weak hashes (identity, strided, ...) still
-    // distribute well under power-of-two bucket counts.
+    // --------------------------------------------------------------- 哈希
+    // 终结器扩散熵，使弱哈希（恒等、步进等）在 2 的幂桶数下仍能良好分布。
     static constexpr size_type mixHash(size_type X) noexcept
     {
         if constexpr (sizeof(size_type) == 8)
@@ -622,13 +615,13 @@ private:
         return mixHash(Hasher(KeyValue));
     }
 
-    // Top 7 bits of the (mixed) hash: 0..127, never the 0xFF empty marker.
+    // 取（混合后）哈希的高 7 位：0..127，永不为 0xFF 空标记。
     static constexpr std::uint8_t fingerprintOf(size_type HashValue) noexcept
     {
         return static_cast<std::uint8_t>(HashValue >> (sizeof(size_type) * 8 - 7));
     }
 
-    // Mask of control-byte slots at or after `From` within a 16-slot group.
+    // 16 槽组内位于 `From` 及其之后的控制字节槽位掩码。
     static constexpr MaskType tailMask(size_t From) noexcept
     {
         return static_cast<MaskType>(~((MaskType{1} << From) - 1));
@@ -671,9 +664,8 @@ private:
         return hashKey(Slots[I].first) & (BucketCount - 1);
     }
 
-    // ------------------------------------------------------------ allocation
-    // Allocates the slot array (values constructed lazily, in place on insert)
-    // and the control-byte groups; both come from the user allocator.
+    // ------------------------------------------------------------ 分配
+    // 分配槽位数组（值在插入时惰性原地构造）与控制字节组；二者均来自用户分配器。
     void allocateStorage(size_type Count)
     {
         BucketCount = roundupPowerOfTwo(Count);
@@ -689,7 +681,7 @@ private:
             NewGroups = GroupAllocTraits::allocate(GA, GroupCount);
             for (size_type I = 0; I < GroupCount; ++I)
             {
-                GroupAllocTraits::construct(GA, NewGroups + I); // default ctor => empty
+                GroupAllocTraits::construct(GA, NewGroups + I); // 默认构造 => 空
             }
         }
         catch (...)
@@ -739,14 +731,14 @@ private:
     void updateGrowthThreshold() noexcept
     {
         GrowthThreshold = static_cast<size_type>(static_cast<double>(BucketCount) * MaxLoadFactor);
-        // Always keep at least one empty slot so probes terminate.
+        // 始终至少保留一个空槽，以保证探测能终止。
         if (GrowthThreshold >= BucketCount)
         {
             GrowthThreshold = BucketCount - 1;
         }
     }
 
-    // slot lifecycle ----------------------------------------------------------- 
+    // 槽位生命周期 -----------------------------------------------------------
     template <typename K, typename... Args>
     void constructSlot(size_type Slot, K&& KeyValue, Args&&... Args_)
     {
@@ -763,7 +755,7 @@ private:
         SlotAllocTraits::destroy(SA, Slots + Slot);
     }
 
-    // find/insert -------------------------------------------------------------- 
+    // 查找/插入 --------------------------------------------------------------
     SlotPair* findSlot(const key_type& KeyValue) const
     {
         const size_type H = hashKey(KeyValue);
@@ -778,7 +770,7 @@ private:
             const SIMDControlByte& G = Groups[Group];
             const MaskType Tail = tailMask(Start);
 
-            // A fingerprint match implies the slot is occupied, so no null check.
+            // 指纹匹配即意味着槽位被占用，因此无需判空。
             MaskType Match = G.matchFingerprint(FP) & Tail;
             while (Match)
             {
@@ -846,10 +838,9 @@ private:
         throw std::overflow_error("FlatHashTable: no empty slot");
     }
 
-    // --------------------------------------------------------------- erasure
-    // Backward-shift deletion: moves values left to close the hole (move if
-    // noexcept-movable, copy otherwise) and destroys the trailing moved-from
-    // value. No memory is freed and no tombstone is left behind.
+    // --------------------------------------------------------------- 删除
+    // 向后移位删除：左移值以填补空洞（noexcept 可移动则移动，否则拷贝），并销毁
+    // 末尾的被移动源值。不释放内存、不留墓碑。
     void eraseSlot(size_type Slot)
     {
         const size_type Mask = BucketCount - 1;
@@ -873,7 +864,7 @@ private:
         --ElementCount;
     }
 
-    // ---------------------------------------------------------------- rehash
+    // ---------------------------------------------------------------- 重哈希
     void rehashImpl(size_type NewBucketCount)
     {
         NewBucketCount = roundupPowerOfTwo(NewBucketCount);
@@ -923,7 +914,7 @@ private:
         }
         catch (...)
         {
-            // New-group ctrl bytes track exactly which new slots were constructed.
+            // 新组的控制字节精确记录了哪些新槽位已被构造。
             for (size_type I = 0; I < NewBucketCount; ++I)
             {
                 if (NewGroups[I / GroupSize].get(I % GroupSize) != SIMDControlByte::EmptyByte)
@@ -940,7 +931,7 @@ private:
             throw;
         }
 
-        // Commit: destroy old values, swap arrays in, free the old storage.
+        // 提交：销毁旧值、交换数组、释放旧存储。
         SlotPair* OldSlots = Slots;
         SIMDControlByte* OldGroups = Groups;
         const size_type OldCount = BucketCount;
@@ -977,7 +968,7 @@ private:
         }
     }
 
-    // ------------------------------------------------------------- ownership
+    // ------------------------------------------------------------- 所有权
     void copyFrom(const FlatHashTable& Other)
     {
         allocateStorage(Other.BucketCount == 0 ? 16 : Other.BucketCount);
@@ -1030,8 +1021,8 @@ private:
     KeyEqual Equal;
     Allocator Alloc;
 
-    SlotPair* Slots = nullptr;          // contiguous value storage, lazy construction
-    SIMDControlByte* Groups = nullptr;  // 16-slot control-byte groups
+    SlotPair* Slots = nullptr;          // 连续值存储，惰性构造
+    SIMDControlByte* Groups = nullptr;  // 16 槽控制字节组
     size_type BucketCount = 0;
     size_type ElementCount = 0;
     size_type GrowthThreshold = 0;
