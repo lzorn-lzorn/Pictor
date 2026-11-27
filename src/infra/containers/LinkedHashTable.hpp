@@ -47,7 +47,7 @@ template <
 >
 class LinkedHashTable
 {
-    // ----------------------------------------------------------------- nodes
+    // nodes -----------------------------------------------------------------
     // The doubly-linked list links live in a base subobject so the end marker
     // (Sentinel) never has to construct a `std::pair<const Key, T>`. This keeps
     // the table usable with non-default-constructible key/value types, matching
@@ -78,14 +78,14 @@ class LinkedHashTable
     using GroupAllocator    = typename std::allocator_traits<NodeAllocator>::template rebind_alloc<SIMDControlByte>;
     using GroupAllocTraits  = std::allocator_traits<GroupAllocator>;
 
-    static constexpr std::size_t GroupSize = SIMDControlByte::GroupSize; // 16
+    static constexpr size_t GroupSize = SIMDControlByte::GroupSize; // 16
     using MaskType = SIMDControlByte::MaskType;
 
 public:
     using key_type        = Key;
     using mapped_type     = T;
     using value_type      = std::pair<const Key, T>;
-    using size_type       = std::size_t;
+    using size_type       = size_t;
     using difference_type = std::ptrdiff_t;
     using hasher          = Hash;
     using key_equal       = KeyEqual;
@@ -95,7 +95,7 @@ public:
     using pointer         = typename std::allocator_traits<Allocator>::pointer;
     using const_pointer   = typename std::allocator_traits<Allocator>::const_pointer;
 
-    // -------------------------------------------------------------- iterator
+    // iterator --------------------------------------------------------------
     template <bool IsConst>
     class Iterator
     {
@@ -142,7 +142,7 @@ public:
     using reverse_iterator       = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
-    // -------------------------------------------------------- local iterator
+    // local iterator --------------------------------------------------------
     // Iterates the elements of a single bucket (elements whose home slot is n).
     // Open addressing scatters a bucket's elements, so this filters the global
     // insertion-order list. It is a forward iterator, as std::unordered_map
@@ -218,7 +218,7 @@ public:
     using local_iterator       = LocalIterator<false>;
     using const_local_iterator = LocalIterator<true>;
 
-    // --------------------------------------------------------- construction
+    // construction ---------------------------------------------------------
     LinkedHashTable()
         : LinkedHashTable(0, Hash{}, KeyEqual{}, Allocator{}) {}
 
@@ -300,7 +300,7 @@ public:
         return *this;
     }
 
-    // ------------------------------------------------------------- iterators
+    // iterators -------------------------------------------------------------
     iterator begin() noexcept { return iterator(Sentinel.Next); }
     const_iterator begin() const noexcept { return const_iterator(Sentinel.Next); }
     const_iterator cbegin() const noexcept { return begin(); }
@@ -323,7 +323,7 @@ public:
         return NodeAllocTraits::max_size(NodeAllocator{Alloc});
     }
 
-    // ------------------------------------------------------------ modifiers
+    // modifiers ------------------------------------------------------------
     void clear() noexcept
     {
         NodeBase* Curr = Sentinel.Next;
@@ -453,7 +453,7 @@ public:
         relinkAfterSwap(Other);
     }
 
-    // --------------------------------------------------------------- lookup
+    // lookup ---------------------------------------------------------------
     iterator find(const key_type& KeyValue)
     {
         Node* Found = findNode(KeyValue);
@@ -497,7 +497,7 @@ public:
         return tryEmplace(std::move(KeyValue)).first->second;
     }
 
-    // ---------------------------------------------------------- hash policy
+    // hash policy ----------------------------------------------------------
     [[nodiscard]] float getLoadFactor() const noexcept
     {
         return BucketCount
@@ -615,7 +615,7 @@ private:
     }
 
     // Mask of control-byte slots at or after `From` within a 16-slot group.
-    static constexpr MaskType tailMask(std::size_t From) noexcept
+    static constexpr MaskType tailMask(size_t From) noexcept
     {
         return static_cast<MaskType>(~((MaskType{1} << From) - 1));
     }
@@ -626,7 +626,7 @@ private:
         {
             return 16;
         }
-        const size_type Top = size_type{1} << (std::numeric_limits<size_type>::digits - 1);
+        constexpr size_type Top = size_type{1} << (std::numeric_limits<size_type>::digits - 1);
         if (Value > Top)
         {
             return Top;
@@ -731,7 +731,7 @@ private:
         const size_type Mask = BucketCount - 1;
         const size_type GroupCount = BucketCount / GroupSize;
         size_type Group = (H & Mask) / GroupSize;
-        std::size_t Start = (H & Mask) % GroupSize;
+        size_t Start = (H & Mask) % GroupSize;
 
         for (size_type Probe = 0; Probe <= GroupCount; ++Probe)
         {
@@ -741,7 +741,7 @@ private:
             MaskType Match = G.matchFingerprint(FP) & Tail;
             while (Match)
             {
-                const std::size_t Bit = static_cast<std::size_t>(std::countr_zero(Match));
+                const auto Bit = static_cast<size_t>(std::countr_zero(Match));
                 const size_type Slot = Group * GroupSize + Bit;
                 Node* Candidate = Buckets[Slot];
                 if (Candidate && Equal(Candidate->Value.first, KeyValue)) [[likely]]
@@ -770,7 +770,7 @@ private:
         const size_type Mask = BucketCount - 1;
         const size_type GroupCount = BucketCount / GroupSize;
         size_type Group = (H & Mask) / GroupSize;
-        std::size_t Start = (H & Mask) % GroupSize;
+        size_t Start = (H & Mask) % GroupSize;
 
         for (size_type Probe = 0; Probe <= GroupCount; ++Probe)
         {
@@ -780,7 +780,7 @@ private:
             MaskType Match = G.matchFingerprint(FP) & Tail;
             while (Match)
             {
-                const std::size_t Bit = static_cast<std::size_t>(std::countr_zero(Match));
+                const auto Bit = static_cast<size_t>(std::countr_zero(Match));
                 const size_type Slot = Group * GroupSize + Bit;
                 Node* Candidate = Buckets[Slot];
                 if (Candidate && Equal(Candidate->Value.first, KeyValue))
@@ -790,10 +790,9 @@ private:
                 Match &= static_cast<MaskType>(Match - 1);
             }
 
-            const MaskType EmptyMask = G.matchEmpty() & Tail;
-            if (EmptyMask)
+            if (const MaskType EmptyMask = G.matchEmpty() & Tail)
             {
-                const std::size_t Bit = static_cast<std::size_t>(std::countr_zero(EmptyMask));
+                const auto Bit = static_cast<size_t>(std::countr_zero(EmptyMask));
                 const size_type Slot = Group * GroupSize + Bit;
                 Node* NewNode = allocateNode(std::forward<K>(KeyValue), std::forward<Args>(Args_)...);
                 Buckets[Slot] = NewNode;
@@ -966,7 +965,7 @@ private:
         NodeAllocTraits::deallocate(NodeAlloc, P, 1);
     }
 
-    // -------------------------------------------------------- linked-list ops
+    // linked-list ops --------------------------------------------------------
     void linkTail(NodeBase* Target) noexcept
     {
         Target->Prev = Sentinel.Prev;
@@ -983,7 +982,7 @@ private:
         Target->Prev = nullptr;
     }
 
-    // ------------------------------------------------------------- ownership
+    // ownership -------------------------------------------------------------
     void copyFrom(const LinkedHashTable& Other)
     {
         allocateBuckets(Other.BucketCount == 0 ? 16 : Other.BucketCount);

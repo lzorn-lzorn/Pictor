@@ -58,14 +58,14 @@ class FlatHashTable
     using GroupAllocator    = typename std::allocator_traits<SlotAllocator>::template rebind_alloc<SIMDControlByte>;
     using GroupAllocTraits  = std::allocator_traits<GroupAllocator>;
 
-    static constexpr std::size_t GroupSize = SIMDControlByte::GroupSize; // 16
+    static constexpr size_t GroupSize = SIMDControlByte::GroupSize; // 16
     using MaskType = SIMDControlByte::MaskType;
 
 public:
     using key_type        = Key;
     using mapped_type     = T;
     using value_type      = std::pair<const Key, T>;
-    using size_type       = std::size_t;
+    using size_type       = size_t;
     using difference_type = std::ptrdiff_t;
     using hasher          = Hash;
     using key_equal       = KeyEqual;
@@ -153,9 +153,8 @@ public:
     using reverse_iterator       = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
-    // -------------------------------------------------------- local iterator
-    // Iterates elements whose home slot is N (forward iterator, matching
-    // LinkedHashTable's bucket iterators).
+    // local iterator -------------------------------------------------------- 
+    // Iterates elements whose home slot is N (forward iterator, matching LinkedHashTable's bucket iterators).
     template <bool IsConst>
     class LocalIterator
     {
@@ -179,8 +178,8 @@ public:
             const SlotPtr End = Owner->Slots + Owner->BucketCount;
             while (Current != End)
             {
-                const size_type I = static_cast<size_type>(Current - Owner->Slots);
-                if (Owner->isOccupiedSlot(I) && Owner->homeOfSlot(I) == BucketIndex)
+                if (const auto I = static_cast<size_type>(Current - Owner->Slots); 
+                    Owner->isOccupiedSlot(I) && Owner->homeOfSlot(I) == BucketIndex)
                 {
                     return;
                 }
@@ -223,7 +222,7 @@ public:
     using local_iterator       = LocalIterator<false>;
     using const_local_iterator = LocalIterator<true>;
 
-    // --------------------------------------------------------- construction
+    // construction --------------------------------------------------------- 
     FlatHashTable()
         : FlatHashTable(0, Hash{}, KeyEqual{}, Allocator{}) {}
 
@@ -413,7 +412,7 @@ public:
         {
             return end();
         }
-        const size_type Slot = static_cast<size_type>(Pos.Current - Slots);
+        const auto Slot = static_cast<size_type>(Pos.Current - Slots);
         eraseSlot(Slot);
         iterator Next(this, Slots + Slot);
         Next.skipEmptyForward();
@@ -436,8 +435,8 @@ public:
     // element of the range.
     iterator erase(const_iterator First, const_iterator Last)
     {
-        const size_type FirstPos = static_cast<size_type>(First.Current - Slots);
-        const size_type LastPos  = static_cast<size_type>(Last.Current - Slots);
+        const auto FirstPos = static_cast<size_type>(First.Current - Slots);
+        const auto LastPos  = static_cast<size_type>(Last.Current - Slots);
         for (size_type P = LastPos; P > FirstPos; --P)
         {
             if (isOccupiedSlot(P - 1))
@@ -595,7 +594,7 @@ public:
     [[nodiscard]] allocator_type getAllocator() const noexcept { return Alloc; }
 
 private:
-    // --------------------------------------------------------------- hashing
+    // hashing --------------------------------------------------------------- 
     // Finalizer spreads entropy so weak hashes (identity, strided, ...) still
     // distribute well under power-of-two bucket counts.
     static constexpr size_type mixHash(size_type X) noexcept
@@ -630,7 +629,7 @@ private:
     }
 
     // Mask of control-byte slots at or after `From` within a 16-slot group.
-    static constexpr MaskType tailMask(std::size_t From) noexcept
+    static constexpr MaskType tailMask(size_t From) noexcept
     {
         return static_cast<MaskType>(~((MaskType{1} << From) - 1));
     }
@@ -747,7 +746,7 @@ private:
         }
     }
 
-    // ----------------------------------------------------------- slot lifecycle
+    // slot lifecycle ----------------------------------------------------------- 
     template <typename K, typename... Args>
     void constructSlot(size_type Slot, K&& KeyValue, Args&&... Args_)
     {
@@ -764,7 +763,7 @@ private:
         SlotAllocTraits::destroy(SA, Slots + Slot);
     }
 
-    // -------------------------------------------------------------- find/insert
+    // find/insert -------------------------------------------------------------- 
     SlotPair* findSlot(const key_type& KeyValue) const
     {
         const size_type H = hashKey(KeyValue);
@@ -772,7 +771,7 @@ private:
         const size_type Mask = BucketCount - 1;
         const size_type GroupCount = BucketCount / GroupSize;
         size_type Group = (H & Mask) / GroupSize;
-        std::size_t Start = (H & Mask) % GroupSize;
+        size_t Start = (H & Mask) % GroupSize;
 
         for (size_type Probe = 0; Probe <= GroupCount; ++Probe)
         {
@@ -783,7 +782,7 @@ private:
             MaskType Match = G.matchFingerprint(FP) & Tail;
             while (Match)
             {
-                const std::size_t Bit = static_cast<std::size_t>(std::countr_zero(Match));
+                const auto Bit = static_cast<size_t>(std::countr_zero(Match));
                 const size_type Slot = Group * GroupSize + Bit;
                 if (Equal(Slots[Slot].first, KeyValue)) [[likely]]
                 {
@@ -811,7 +810,7 @@ private:
         const size_type Mask = BucketCount - 1;
         const size_type GroupCount = BucketCount / GroupSize;
         size_type Group = (H & Mask) / GroupSize;
-        std::size_t Start = (H & Mask) % GroupSize;
+        size_t Start = (H & Mask) % GroupSize;
 
         for (size_type Probe = 0; Probe <= GroupCount; ++Probe)
         {
@@ -821,7 +820,7 @@ private:
             MaskType Match = G.matchFingerprint(FP) & Tail;
             while (Match)
             {
-                const std::size_t Bit = static_cast<std::size_t>(std::countr_zero(Match));
+                const auto Bit = static_cast<size_t>(std::countr_zero(Match));
                 const size_type Slot = Group * GroupSize + Bit;
                 if (Equal(Slots[Slot].first, KeyValue))
                 {
@@ -833,7 +832,7 @@ private:
             const MaskType EmptyMask = G.matchEmpty() & Tail;
             if (EmptyMask)
             {
-                const std::size_t Bit = static_cast<std::size_t>(std::countr_zero(EmptyMask));
+                const auto Bit = static_cast<size_t>(std::countr_zero(EmptyMask));
                 const size_type Slot = Group * GroupSize + Bit;
                 constructSlot(Slot, std::forward<K>(KeyValue), std::forward<Args>(Args_)...);
                 G.set(Bit, FP);
