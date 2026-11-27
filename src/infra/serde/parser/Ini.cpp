@@ -1,6 +1,10 @@
 //
 // Created by Administrator on 2026/11/18.
 //
+// C++11 兼容(2026/11 重构): string_view / Optional / to_chars / from_chars 走
+// infra::compat; std::expected 走 infra::serde_detail::Expected; std::variant 访问经
+// ini_detail::getIf<T>; if 初始化语句/contains/std::erase 等 C++17/20 写法改写。
+//
 
 // getenv 在 MSVC 下被标记为 unsafe, 本文件只用其读取环境变量(不做写入)
 #define _CRT_SECURE_NO_WARNINGS
@@ -26,6 +30,13 @@ namespace
      */
     struct TrimmedRange
     {
+        TrimmedRange() = default;
+
+        TrimmedRange(std::size_t InOffset, std::size_t InLength)
+            : Offset(InOffset), Length(InLength)
+        {
+        }
+
         std::size_t Offset = 0;
         std::size_t Length = 0;
     };
@@ -35,7 +46,7 @@ namespace
         return Character == ' ' || Character == '\t' || Character == '\r';
     }
 
-    [[nodiscard]] TrimmedRange trimRange(std::string_view Text) noexcept
+    PICTOR_NODISCARD TrimmedRange trimRange(infra::compat::string_view Text) noexcept
     {
         std::size_t Begin = 0;
         std::size_t End = Text.size();
@@ -50,9 +61,9 @@ namespace
         return TrimmedRange{ Begin, End - Begin };
     }
 
-    [[nodiscard]] std::string_view applyTrim(std::string_view Text, TrimmedRange Range) noexcept
+    PICTOR_NODISCARD infra::compat::string_view applyTrim(infra::compat::string_view Text, TrimmedRange Range) noexcept
     {
-        return Text.substr(Range.Offset, Range.Length);
+        return infra::compat::string_view(Text.data() + Range.Offset, Range.Length);
     }
 
     bool isWhitespace(char Character) noexcept
@@ -61,7 +72,7 @@ namespace
     }
 
     /** @brief ASCII 大小写不敏感比较。 */
-    bool equalsIgnoreCase(std::string_view A, std::string_view B) noexcept
+    bool equalsIgnoreCase(infra::compat::string_view A, infra::compat::string_view B) noexcept
     {
         if (A.size() != B.size())
         {
@@ -82,7 +93,7 @@ namespace
     }
 
     /** @brief UTF-8 合法性校验(拒绝过长编码/代理区/超范围码点)。 */
-    [[nodiscard]] bool isValidUtf8(std::string_view Text) noexcept
+    PICTOR_NODISCARD bool isValidUtf8(infra::compat::string_view Text) noexcept
     {
         const std::size_t N = Text.size();
         std::size_t I = 0;
@@ -159,7 +170,7 @@ namespace
     }
 
     /** @brief 值/列表元素的通用转义处理: 消费 Line[I] 处的反斜杠转义并追加到 Out。 */
-    void appendEscape(std::string_view Line, std::size_t& I, std::string& Out, bool& BadHex)
+    void appendEscape(infra::compat::string_view Line, std::size_t& I, std::string& Out, bool& BadHex)
     {
         if (I + 1 >= Line.size())
         {
@@ -207,7 +218,7 @@ namespace
     }
 
     /** @brief 列表内部 "[a, "b,c", d]" -> {"a", "b,c", "d"}(失败返回 false, 整体按字符串)。 */
-    [[nodiscard]] bool parseListElements(std::string_view Inner, IniStringList& Out)
+    PICTOR_NODISCARD bool parseListElements(infra::compat::string_view Inner, IniStringList& Out)
     {
         const TrimmedRange Whole = trimRange(Inner);
         if (Whole.Length == 0)
@@ -237,7 +248,8 @@ namespace
             }
             if (C == ',' && !InQuotes)
             {
-                Out.push_back(std::string(applyTrim(Element, trimRange(Element))));
+                Out.push_back(ini_detail::viewToString(
+                    applyTrim(ini_detail::toStringView(Element), trimRange(ini_detail::toStringView(Element)))));
                 Element.clear();
                 continue;
             }
@@ -247,7 +259,8 @@ namespace
         {
             return false;
         }
-        Out.push_back(std::string(applyTrim(Element, trimRange(Element))));
+        Out.push_back(ini_detail::viewToString(
+            applyTrim(ini_detail::toStringView(Element), trimRange(ini_detail::toStringView(Element)))));
         return true;
     }
 
@@ -257,14 +270,14 @@ namespace
         if (EnableLists && Value.size() >= 2 && Value.front() == '[' && Value.back() == ']')
         {
             IniStringList List;
-            if (parseListElements(std::string_view(Value).substr(1, Value.size() - 2), List))
+            if (parseListElements(infra::compat::string_view(Value.data() + 1, Value.size() - 2), List))
             {
                 return List;
             }
             // 列表解析失败 -> 作为普通字符串
         }
 
-        const std::string_view V = Value;
+        const infra::compat::string_view V = ini_detail::toStringView(Value);
         if (equalsIgnoreCase(V, "true") || equalsIgnoreCase(V, "yes") || equalsIgnoreCase(V, "on"))
         {
             return true;
@@ -273,11 +286,13 @@ namespace
         {
             return false;
         }
-        if (std::int64_t Int = 0; ini_detail::tryParseInt(V, Int))
+        std::int64_t Int = 0;
+        if (ini_detail::tryParseInt(V, Int))
         {
             return Int;
         }
-        if (double Double = 0.0; ini_detail::tryParseDouble(V, Double))
+        double Double = 0.0;
+        if (ini_detail::tryParseDouble(V, Double))
         {
             return Double;
         }
@@ -300,7 +315,7 @@ namespace
             }
 
             IniStringList List;
-            if (const auto* Old = std::get_if<IniStringList>(&Existing.Value))
+            if (const auto* Old = ini_detail::getIf<IniStringList>(&Existing.Value))
             {
                 List = *Old;
             }
@@ -308,7 +323,7 @@ namespace
             {
                 List.push_back(ini_detail::variantToString(Existing.Value));
             }
-            if (const auto* New = std::get_if<IniStringList>(&Entry.Value))
+            if (const auto* New = ini_detail::getIf<IniStringList>(&Entry.Value))
             {
                 for (const std::string& Element : *New)
                 {
@@ -326,7 +341,7 @@ namespace
     }
 
     /** @brief ${VAR} 环境变量插值(失败/严格模式返回错误)。 */
-    std::optional<IniError> interpolate(std::string& Value, bool Strict)
+    infra::compat::Optional<IniError> interpolate(std::string& Value, bool Strict)
     {
         std::string Out;
         std::size_t Pos = 0;
@@ -361,12 +376,12 @@ namespace
             Pos = End + 1;
         }
         Value = std::move(Out);
-        return std::nullopt;
+        return infra::compat::nullopt;
     }
 
     /** @brief Section 名是否需要引号包裹(含策略附加字符集)。 */
-    [[nodiscard]] bool needsSectionQuoting(std::string_view Name,
-                                           std::string_view ExtraSectionNameChars) noexcept
+    PICTOR_NODISCARD bool needsSectionQuoting(infra::compat::string_view Name,
+                                              infra::compat::string_view ExtraSectionNameChars) noexcept
     {
         if (Name.empty())
         {
@@ -382,7 +397,7 @@ namespace
             {
                 continue;
             }
-            if (ExtraSectionNameChars.find(C) != std::string_view::npos)
+            if (ExtraSectionNameChars.find(C) != infra::compat::string_view::npos)
             {
                 continue;
             }
@@ -392,7 +407,7 @@ namespace
     }
 
     /** @brief 引号包裹 Section 名(转义 \ 与 ")。 */
-    std::string quoteSectionName(std::string_view Name)
+    std::string quoteSectionName(infra::compat::string_view Name)
     {
         std::string Out = "\"";
         for (const char C : Name)
@@ -410,24 +425,27 @@ namespace
     /** @brief variant -> 可写入文本(字符串按需引号, 列表加方括号)。 */
     std::string valueToIniText(const IniVariant& Value)
     {
-        return std::visit(
-            [](const auto& Arg) -> std::string
-            {
-                using T = std::decay_t<decltype(Arg)>;
-                if constexpr (std::is_same_v<T, std::string>)
-                {
-                    return ini_detail::valueToText(Arg);
-                }
-                else if constexpr (std::is_same_v<T, IniStringList>)
-                {
-                    return ini_detail::listToString(Arg);
-                }
-                else
-                {
-                    return ini_detail::scalarToString(Arg);
-                }
-            },
-            Value);
+        if (const std::string* S = ini_detail::getIf<std::string>(&Value))
+        {
+            return ini_detail::valueToText(ini_detail::toStringView(*S));
+        }
+        if (const IniStringList* L = ini_detail::getIf<IniStringList>(&Value))
+        {
+            return ini_detail::listToString(*L);
+        }
+        if (const bool* B = ini_detail::getIf<bool>(&Value))
+        {
+            return ini_detail::scalarToString(*B);
+        }
+        if (const std::int64_t* I = ini_detail::getIf<std::int64_t>(&Value))
+        {
+            return ini_detail::scalarToString(*I);
+        }
+        if (const double* D = ini_detail::getIf<double>(&Value))
+        {
+            return ini_detail::scalarToString(*D);
+        }
+        return std::string();
     }
 
     void appendLines(std::string& Out, const std::vector<std::string>& Lines)
@@ -493,13 +511,13 @@ std::string IniError::asString(const IniError& Error)
 // IniChecker
 // ============================================================================
 
-IniLineKind IniChecker::classify(std::string_view Line) const noexcept
+IniLineKind IniChecker::classify(infra::compat::string_view Line) const noexcept
 {
     if (Line.empty())
     {
         return IniLineKind::Blank;
     }
-    if (Policy.AnnotationChars.find(Line.front()) != std::string_view::npos)
+    if (Policy.AnnotationChars.find(Line.front()) != infra::compat::string_view::npos)
     {
         return IniLineKind::Comment;
     }
@@ -510,15 +528,15 @@ IniLineKind IniChecker::classify(std::string_view Line) const noexcept
     return IniLineKind::KeyValue;
 }
 
-std::optional<IniError> IniChecker::checkSectionName(std::string_view Name) const
+infra::compat::Optional<IniError> IniChecker::checkSectionName(infra::compat::string_view Name) const
 {
     if (Name.empty())
     {
-        return IniError{ IniError::Code::InvalidSectionName, 0, std::string(Name) };
+        return IniError{ IniError::Code::InvalidSectionName, 0, ini_detail::viewToString(Name) };
     }
     if (Policy.AllowAnySectionName)
     {
-        return std::nullopt;
+        return infra::compat::nullopt;
     }
     for (const char Character : Name)
     {
@@ -530,16 +548,16 @@ std::optional<IniError> IniChecker::checkSectionName(std::string_view Name) cons
         {
             continue;
         }
-        if (Policy.ExtraSectionNameChars.find(Character) != std::string_view::npos)
+        if (Policy.ExtraSectionNameChars.find(Character) != infra::compat::string_view::npos)
         {
             continue;
         }
-        return IniError{ IniError::Code::InvalidSectionName, 0, std::string(Name) };
+        return IniError{ IniError::Code::InvalidSectionName, 0, ini_detail::viewToString(Name) };
     }
-    return std::nullopt;
+    return infra::compat::nullopt;
 }
 
-std::optional<IniError> IniChecker::checkKeyValue(const IniKeyValueRaw& Raw) const
+infra::compat::Optional<IniError> IniChecker::checkKeyValue(const IniKeyValueRaw& Raw) const
 {
     if (Raw.HasInteriorSpace && !Policy.InteriorSpaceInKey)
     {
@@ -548,7 +566,7 @@ std::optional<IniError> IniChecker::checkKeyValue(const IniKeyValueRaw& Raw) con
 
     for (const char Character : Raw.Key)
     {
-        if (Policy.ForbiddenKeyChars.find(Character) != std::string_view::npos)
+        if (Policy.ForbiddenKeyChars.find(Character) != infra::compat::string_view::npos)
         {
             return IniError{ IniError::Code::InvalidKeyCharacter, 0, Raw.Key };
         }
@@ -598,26 +616,26 @@ std::optional<IniError> IniChecker::checkKeyValue(const IniKeyValueRaw& Raw) con
         return IniError{ IniError::Code::EmptyKey, 0, {} };
     }
 
-    return std::nullopt;
+    return infra::compat::nullopt;
 }
 
 void IniChecker::finalize(IniKeyValueRaw& Raw) const
 {
     if (!Raw.HasDelimiter)
     {
-        Raw.Value.assign(Policy.DefaultValue);
+        Raw.Value.assign(Policy.DefaultValue.data(), Policy.DefaultValue.size());
     }
     if (Raw.Key.empty())
     {
-        Raw.Key.assign(Policy.DefaultValue);
+        Raw.Key.assign(Policy.DefaultValue.data(), Policy.DefaultValue.size());
     }
     if (Policy.KeyCaseMode != ECaseMode::Default)
     {
-        Raw.Key = normalizeKey(Raw.Key);
+        Raw.Key = normalizeKey(ini_detail::toStringView(Raw.Key));
     }
 }
 
-std::string IniChecker::normalizeKey(std::string_view Key) const
+std::string IniChecker::normalizeKey(infra::compat::string_view Key) const
 {
     std::string Out;
     Out.reserve(Key.size());
@@ -642,9 +660,9 @@ std::string IniChecker::normalizeKey(std::string_view Key) const
 // 纯解析: 只做语法切分, 不含任何策略判断
 // ============================================================================
 
-std::expected<IniKeyValueRaw, IniError> parseIniKeyValue(std::string_view Line,
-                                                         std::string_view DelimiterChars,
-                                                         std::string_view AnnotationChars)
+infra::serde_detail::Expected<IniKeyValueRaw, IniError> parseIniKeyValue(infra::compat::string_view Line,
+                                                                  infra::compat::string_view DelimiterChars,
+                                                                  infra::compat::string_view AnnotationChars)
 {
     const std::size_t Length = Line.size();
     std::size_t I = 0;
@@ -665,15 +683,15 @@ std::expected<IniKeyValueRaw, IniError> parseIniKeyValue(std::string_view Line,
     {
         const char Character = Line[I];
 
-        if (DelimiterChars.find(Character) != std::string_view::npos)
+        if (DelimiterChars.find(Character) != infra::compat::string_view::npos)
         {
             Raw.HasDelimiter = true;
             break;
         }
-        if (AnnotationChars.find(Character) != std::string_view::npos)
+        if (AnnotationChars.find(Character) != infra::compat::string_view::npos)
         {
-            return std::unexpected(
-                IniError{ IniError::Code::CommentInKey, 0, std::string(Line) });
+            return infra::serde_detail::unexpected(
+                IniError{ IniError::Code::CommentInKey, 0, ini_detail::viewToString(Line) });
         }
         if (isWhitespace(Character))
         {
@@ -726,7 +744,7 @@ std::expected<IniKeyValueRaw, IniError> parseIniKeyValue(std::string_view Line,
                     SignificantLength = Raw.Value.size();
                     continue;
                 }
-                if (!InQuotes && AnnotationChars.find(Character) != std::string_view::npos)
+                if (!InQuotes && AnnotationChars.find(Character) != infra::compat::string_view::npos)
                 {
                     break; // 尾注释
                 }
@@ -758,8 +776,8 @@ std::expected<IniKeyValueRaw, IniError> parseIniKeyValue(std::string_view Line,
                 appendEscape(Line, I, Raw.Value, BadHex);
                 if (BadHex)
                 {
-                    return std::unexpected(
-                        IniError{ IniError::Code::InvalidEscapeSequence, 0, std::string(Line) });
+                    return infra::serde_detail::unexpected(
+                        IniError{ IniError::Code::InvalidEscapeSequence, 0, ini_detail::viewToString(Line) });
                 }
                 SignificantLength = Raw.Value.size();
                 continue;
@@ -773,14 +791,14 @@ std::expected<IniKeyValueRaw, IniError> parseIniKeyValue(std::string_view Line,
 
             if (!InQuotes)
             {
-                if (AnnotationChars.find(Character) != std::string_view::npos)
+                if (AnnotationChars.find(Character) != infra::compat::string_view::npos)
                 {
                     break;
                 }
-                if (DelimiterChars.find(Character) != std::string_view::npos)
+                if (DelimiterChars.find(Character) != infra::compat::string_view::npos)
                 {
-                    return std::unexpected(
-                        IniError{ IniError::Code::SecondDelimiterInValue, 0, std::string(Line) });
+                    return infra::serde_detail::unexpected(
+                        IniError{ IniError::Code::SecondDelimiterInValue, 0, ini_detail::viewToString(Line) });
                 }
             }
 
@@ -812,63 +830,65 @@ struct Ini::ParseState
     bool HasContent = false;
 };
 
-std::expected<Ini, IniError> Ini::fromString(std::string_view IniContent)
+infra::serde_detail::Expected<Ini, IniError> Ini::fromString(infra::compat::string_view IniContent)
 {
     Ini Result;
-    if (std::expected<void, IniError> Parsed = Result.parse(IniContent); !Parsed)
+    infra::serde_detail::Expected<void, IniError> Parsed = Result.parse(IniContent);
+    if (!Parsed)
     {
-        return std::unexpected(Parsed.error());
+        return infra::serde_detail::unexpected(Parsed.error());
     }
     return Result;
 }
 
-std::expected<Ini, IniError> Ini::fromFile(std::string_view FilePath)
+infra::serde_detail::Expected<Ini, IniError> Ini::fromFile(infra::compat::string_view FilePath)
 {
-    std::expected<std::string, IniError> Content = readIniFile(FilePath);
+    infra::serde_detail::Expected<std::string, IniError> Content = readIniFile(FilePath);
     if (!Content)
     {
-        return std::unexpected(Content.error());
+        return infra::serde_detail::unexpected(Content.error());
     }
     Ini Result;
-    if (std::expected<void, IniError> Parsed = Result.parse(*Content); !Parsed)
+    infra::serde_detail::Expected<void, IniError> Parsed = Result.parse(ini_detail::toStringView(*Content));
+    if (!Parsed)
     {
-        return std::unexpected(Parsed.error());
+        return infra::serde_detail::unexpected(Parsed.error());
     }
-    Result.SourcePath.assign(FilePath);
+    Result.SourcePath.assign(FilePath.data(), FilePath.size());
     return Result;
 }
 
-std::expected<void, IniError> Ini::load(std::string_view FilePath)
+infra::serde_detail::Expected<void, IniError> Ini::load(infra::compat::string_view FilePath)
 {
-    std::expected<std::string, IniError> Content = readIniFile(FilePath);
+    infra::serde_detail::Expected<std::string, IniError> Content = readIniFile(FilePath);
     if (!Content)
     {
         return fail(Content.error());
     }
-    std::expected<void, IniError> Parsed = parse(*Content);
+    infra::serde_detail::Expected<void, IniError> Parsed = parse(ini_detail::toStringView(*Content));
     if (Parsed)
     {
-        SourcePath.assign(FilePath);
+        SourcePath.assign(FilePath.data(), FilePath.size());
     }
     return Parsed;
 }
 
-std::expected<void, IniError> Ini::loadMapped(std::string_view FilePath)
+infra::serde_detail::Expected<void, IniError> Ini::loadMapped(infra::compat::string_view FilePath)
 {
-    std::expected<IniMappedFile, IniError> Mapped = mapIniFile(FilePath);
+    infra::serde_detail::Expected<IniMappedFile, IniError> Mapped = mapIniFile(FilePath);
     if (!Mapped)
     {
         return fail(Mapped.error());
     }
-    std::expected<void, IniError> Parsed = parse(Mapped->view());
+    infra::serde_detail::Expected<void, IniError> Parsed = parse(Mapped->view());
     if (Parsed)
     {
-        SourcePath.assign(FilePath);
+        SourcePath.assign(FilePath.data(), FilePath.size());
     }
     return Parsed;
 }
 
-std::expected<void, IniError> Ini::parse(std::string_view IniContent)
+infra::serde_detail::Expected<void, IniError> Ini::parse(infra::compat::string_view IniContent)
 {
     Sections.clear();
     SectionOrder.clear();
@@ -883,34 +903,40 @@ std::expected<void, IniError> Ini::parse(std::string_view IniContent)
     }
 
     ParseState State;
-    std::string_view Remaining = IniContent;
+    infra::compat::string_view Remaining = IniContent;
     std::size_t LineNumber = 0;
     while (!Remaining.empty())
     {
         ++LineNumber;
         const std::size_t Newline = Remaining.find('\n');
-        std::string_view RawLine =
-            (Newline == std::string_view::npos) ? Remaining : Remaining.substr(0, Newline);
+        infra::compat::string_view RawLine =
+            (Newline == infra::compat::string_view::npos)
+                ? Remaining
+                : infra::compat::string_view(Remaining.data(), Newline);
         Remaining =
-            (Newline == std::string_view::npos) ? std::string_view{} : Remaining.substr(Newline + 1);
+            (Newline == infra::compat::string_view::npos)
+                ? infra::compat::string_view{}
+                : Remaining.substr(Newline + 1);
 
         if (!RawLine.empty() && RawLine.back() == '\r')
         {
-            RawLine.remove_suffix(1); // CRLF
+            RawLine = infra::compat::string_view(RawLine.data(), RawLine.size() - 1); // CRLF
         }
-        if (std::optional<IniError> Error = feedLine(RawLine, LineNumber, State))
+        infra::compat::Optional<IniError> Error = feedLine(RawLine, LineNumber, State);
+        if (Error)
         {
             return fail(*Error);
         }
     }
-    if (std::optional<IniError> Error = finishParse(State))
+    infra::compat::Optional<IniError> Error = finishParse(State);
+    if (Error)
     {
         return fail(*Error);
     }
     return {};
 }
 
-std::expected<void, IniError> Ini::parse(std::istream& Stream)
+infra::serde_detail::Expected<void, IniError> Ini::parse(std::istream& Stream)
 {
     Sections.clear();
     SectionOrder.clear();
@@ -929,37 +955,40 @@ std::expected<void, IniError> Ini::parse(std::istream& Stream)
         {
             Line.pop_back();
         }
-        if (Checker.policy().ValidateUtf8 && !isValidUtf8(Line))
+        if (Checker.policy().ValidateUtf8 && !isValidUtf8(ini_detail::toStringView(Line)))
         {
             return fail(IniError{ IniError::Code::InvalidUtf8, LineNumber, {} });
         }
-        if (std::optional<IniError> Error = feedLine(Line, LineNumber, State))
+        infra::compat::Optional<IniError> Error = feedLine(ini_detail::toStringView(Line), LineNumber, State);
+        if (Error)
         {
             return fail(*Error);
         }
     }
-    if (std::optional<IniError> Error = finishParse(State))
+    infra::compat::Optional<IniError> Error = finishParse(State);
+    if (Error)
     {
         return fail(*Error);
     }
     return {};
 }
 
-std::optional<IniError> Ini::feedLine(std::string_view RawLine, std::size_t LineNumber,
-                                      ParseState& State)
+infra::compat::Optional<IniError> Ini::feedLine(infra::compat::string_view RawLine, std::size_t LineNumber,
+                                                ParseState& State)
 {
-    LineBuffer.push_back(std::string(RawLine));
+    LineBuffer.push_back(ini_detail::viewToString(RawLine));
 
     // ---------- 续行内容: 原样拼接 ----------
     if (State.HasPendingRaw)
     {
-        const std::string_view Line = applyTrim(RawLine, trimRange(RawLine));
+        const infra::compat::string_view Line = applyTrim(RawLine, trimRange(RawLine));
         if (Checker.classify(Line) == IniLineKind::SectionHeader)
         {
             // 防呆: 续行遇到新的 Section 头 -> 终止续行(去掉末尾空白), 本行按普通行重新处理
-            const TrimmedRange Range = trimRange(State.PendingRaw.Value);
+            const TrimmedRange Range = trimRange(ini_detail::toStringView(State.PendingRaw.Value));
             State.PendingRaw.Value.resize(Range.Offset + Range.Length);
-            if (std::optional<IniError> Error = commitEntry(State.PendingRaw, State.PendingRawLine, State))
+            infra::compat::Optional<IniError> Error = commitEntry(State.PendingRaw, State.PendingRawLine, State);
+            if (Error)
             {
                 return Error;
             }
@@ -970,45 +999,46 @@ std::optional<IniError> Ini::feedLine(std::string_view RawLine, std::size_t Line
         {
             if (!Line.empty() && Line.back() == '\\')
             {
-                State.PendingRaw.Value.append(Line.substr(0, Line.size() - 1));
-                return std::nullopt; // 继续续行
+                State.PendingRaw.Value.append(Line.data(), Line.size() - 1);
+                return infra::compat::nullopt; // 继续续行
             }
-            State.PendingRaw.Value.append(Line);
-            if (std::optional<IniError> Error = commitEntry(State.PendingRaw, State.PendingRawLine, State))
+            State.PendingRaw.Value.append(Line.data(), Line.size());
+            infra::compat::Optional<IniError> Error = commitEntry(State.PendingRaw, State.PendingRawLine, State);
+            if (Error)
             {
                 return Error;
             }
             State.HasPendingRaw = false;
-            return std::nullopt;
+            return infra::compat::nullopt;
         }
     }
 
-    const std::string_view Line = applyTrim(RawLine, trimRange(RawLine));
+    const infra::compat::string_view Line = applyTrim(RawLine, trimRange(RawLine));
     if (Line.empty())
     {
         if (!State.Dropping)
         {
-            State.PendingLines.push_back(std::string(RawLine));
+            State.PendingLines.push_back(ini_detail::viewToString(RawLine));
         }
-        return std::nullopt;
+        return infra::compat::nullopt;
     }
 
     if (State.Dropping && Checker.classify(Line) != IniLineKind::SectionHeader)
     {
-        return std::nullopt; // Drop 策略: 该 Section 下的一切被忽略
+        return infra::compat::nullopt; // Drop 策略: 该 Section 下的一切被忽略
     }
 
     switch (Checker.classify(Line))
     {
         case IniLineKind::Comment:
         case IniLineKind::Blank:
-            State.PendingLines.push_back(std::string(RawLine));
-            return std::nullopt;
+            State.PendingLines.push_back(ini_detail::viewToString(RawLine));
+            return infra::compat::nullopt;
 
         case IniLineKind::SectionHeader:
         {
             std::string Name;
-            std::optional<std::string> Parent;
+            infra::compat::Optional<std::string> Parent;
             bool Quoted = false;
             std::size_t Pos = 1;
 
@@ -1040,76 +1070,80 @@ std::optional<IniError> Ini::feedLine(std::string_view RawLine, std::size_t Line
                 if (!Closed)
                 {
                     return IniError{ IniError::Code::UnclosedQuotedSectionName, LineNumber,
-                                     std::string(Line) };
+                                     ini_detail::viewToString(Line) };
                 }
 
-                const std::string_view Tail = applyTrim(Line.substr(Pos), trimRange(Line.substr(Pos)));
+                const infra::compat::string_view Tail = applyTrim(Line.substr(Pos), trimRange(Line.substr(Pos)));
                 if (Checker.policy().EnableSectionInheritance && Tail.size() > 1 &&
                     Tail.front() == ':' && Tail.back() == ']')
                 {
-                    const std::string_view ParentRaw =
-                        applyTrim(Tail.substr(1, Tail.size() - 2),
-                                  trimRange(Tail.substr(1, Tail.size() - 2)));
+                    const infra::compat::string_view ParentRaw =
+                        applyTrim(infra::compat::string_view(Tail.data() + 1, Tail.size() - 2),
+                                  trimRange(infra::compat::string_view(Tail.data() + 1, Tail.size() - 2)));
                     if (ParentRaw.empty() || Checker.checkSectionName(ParentRaw).has_value())
                     {
                         return IniError{ IniError::Code::InvalidParentSectionName, LineNumber,
-                                         std::string(Line) };
+                                         ini_detail::viewToString(Line) };
                     }
-                    Parent = std::string(ParentRaw);
+                    Parent = ini_detail::viewToString(ParentRaw);
                 }
                 else if (Tail != "]")
                 {
                     return IniError{ IniError::Code::TrailingContentInSectionHeader, LineNumber,
-                                     std::string(Line) };
+                                     ini_detail::viewToString(Line) };
                 }
             }
             else
             {
                 const std::size_t Close = Line.find(']');
-                if (Close == std::string_view::npos)
+                if (Close == infra::compat::string_view::npos)
                 {
                     return IniError{ IniError::Code::UnclosedSectionHeader, LineNumber,
-                                     std::string(Line) };
+                                     ini_detail::viewToString(Line) };
                 }
-                const std::string_view Tail = applyTrim(Line.substr(Close + 1),
-                                                        trimRange(Line.substr(Close + 1)));
+                const infra::compat::string_view Tail = applyTrim(Line.substr(Close + 1),
+                                                                  trimRange(Line.substr(Close + 1)));
                 if (!Tail.empty())
                 {
                     return IniError{ IniError::Code::TrailingContentInSectionHeader, LineNumber,
-                                     std::string(Line) };
+                                     ini_detail::viewToString(Line) };
                 }
 
-                std::string_view NameRaw = applyTrim(Line.substr(1, Close - 1),
-                                                     trimRange(Line.substr(1, Close - 1)));
+                infra::compat::string_view NameRaw = applyTrim(
+                    infra::compat::string_view(Line.data() + 1, Close - 1),
+                    trimRange(infra::compat::string_view(Line.data() + 1, Close - 1)));
                 if (Checker.policy().EnableSectionInheritance)
                 {
                     const std::size_t Colon = NameRaw.find(':');
-                    if (Colon != std::string_view::npos)
+                    if (Colon != infra::compat::string_view::npos)
                     {
-                        const std::string_view ParentRaw =
+                        const infra::compat::string_view ParentRaw =
                             applyTrim(NameRaw.substr(Colon + 1), trimRange(NameRaw.substr(Colon + 1)));
-                        NameRaw = applyTrim(NameRaw.substr(0, Colon), trimRange(NameRaw.substr(0, Colon)));
+                        NameRaw = applyTrim(infra::compat::string_view(NameRaw.data(), Colon),
+                                            trimRange(infra::compat::string_view(NameRaw.data(), Colon)));
                         if (ParentRaw.empty() || Checker.checkSectionName(ParentRaw).has_value())
                         {
                             return IniError{ IniError::Code::InvalidParentSectionName, LineNumber,
-                                             std::string(Line) };
+                                             ini_detail::viewToString(Line) };
                         }
-                        Parent = std::string(ParentRaw);
+                        Parent = ini_detail::viewToString(ParentRaw);
                     }
                 }
-                Name.assign(NameRaw);
+                Name.assign(NameRaw.data(), NameRaw.size());
             }
 
             // 名称检查(引号名只要求非空)
-            const bool NameInvalid = Quoted ? Name.empty() : Checker.checkSectionName(Name).has_value();
+            const bool NameInvalid = Quoted ? Name.empty()
+                                            : Checker.checkSectionName(ini_detail::toStringView(Name)).has_value();
             if (NameInvalid)
             {
                 State.PendingLines.clear();
                 if (Checker.policy().SectionErrorHandle == ESectionErrorHandle::TransferToDefault)
                 {
-                    State.CurrentSection.assign(Checker.policy().DefaultSectionName);
+                    State.CurrentSection.assign(Checker.policy().DefaultSectionName.data(),
+                                                Checker.policy().DefaultSectionName.size());
                     State.Dropping = false;
-                    if (!Sections.contains(State.CurrentSection))
+                    if (Sections.find(State.CurrentSection) == Sections.end())
                     {
                         SectionOrder.push_back(State.CurrentSection);
                     }
@@ -1119,12 +1153,12 @@ std::optional<IniError> Ini::feedLine(std::string_view RawLine, std::size_t Line
                     State.CurrentSection.clear();
                     State.Dropping = true;
                 }
-                return std::nullopt;
+                return infra::compat::nullopt;
             }
 
             State.CurrentSection = Name;
             State.Dropping = false;
-            const bool Exists = Sections.contains(State.CurrentSection);
+            const bool Exists = Sections.find(State.CurrentSection) != Sections.end();
             IniSection& Sec = Sections[State.CurrentSection];
             if (!Exists)
             {
@@ -1138,7 +1172,7 @@ std::optional<IniError> Ini::feedLine(std::string_view RawLine, std::size_t Line
             }
             State.PendingLines.clear();
             State.HasContent = true;
-            return std::nullopt;
+            return infra::compat::nullopt;
         }
 
         case IniLineKind::KeyValue:
@@ -1146,10 +1180,10 @@ std::optional<IniError> Ini::feedLine(std::string_view RawLine, std::size_t Line
             if (State.CurrentSection.empty())
             {
                 return IniError{ IniError::Code::KeyValueOutsideSection, LineNumber,
-                                 std::string(Line) };
+                                 ini_detail::viewToString(Line) };
             }
 
-            std::expected<IniKeyValueRaw, IniError> Raw =
+            infra::serde_detail::Expected<IniKeyValueRaw, IniError> Raw =
                 parseIniKeyValue(Line, Checker.policy().DelimiterChars,
                                  Checker.policy().AnnotationChars);
             if (!Raw)
@@ -1163,18 +1197,19 @@ std::optional<IniError> Ini::feedLine(std::string_view RawLine, std::size_t Line
                 State.PendingRaw = std::move(*Raw);
                 State.HasPendingRaw = true;
                 State.PendingRawLine = LineNumber;
-                return std::nullopt;
+                return infra::compat::nullopt;
             }
             return commitEntry(*Raw, LineNumber, State);
         }
     }
-    return std::nullopt;
+    return infra::compat::nullopt;
 }
 
-std::optional<IniError> Ini::commitEntry(IniKeyValueRaw& Raw, std::size_t LineNumber,
-                                         ParseState& State)
+infra::compat::Optional<IniError> Ini::commitEntry(IniKeyValueRaw& Raw, std::size_t LineNumber,
+                                                   ParseState& State)
 {
-    if (std::optional<IniError> Check = Checker.checkKeyValue(Raw))
+    infra::compat::Optional<IniError> Check = Checker.checkKeyValue(Raw);
+    if (Check)
     {
         Check->LineNumber = LineNumber;
         return Check;
@@ -1183,7 +1218,8 @@ std::optional<IniError> Ini::commitEntry(IniKeyValueRaw& Raw, std::size_t LineNu
 
     if (Checker.policy().EnableInterpolation)
     {
-        if (std::optional<IniError> Error = interpolate(Raw.Value, Checker.policy().StrictInterpolation))
+        infra::compat::Optional<IniError> Error = interpolate(Raw.Value, Checker.policy().StrictInterpolation);
+        if (Error)
         {
             Error->LineNumber = LineNumber;
             return Error;
@@ -1197,14 +1233,15 @@ std::optional<IniError> Ini::commitEntry(IniKeyValueRaw& Raw, std::size_t LineNu
     upsertEntry(Sections[State.CurrentSection], std::move(Entry),
                 Checker.policy().DuplicateKeysAsList);
     State.HasContent = true;
-    return std::nullopt;
+    return infra::compat::nullopt;
 }
 
-std::optional<IniError> Ini::finishParse(ParseState& State)
+infra::compat::Optional<IniError> Ini::finishParse(ParseState& State)
 {
     if (State.HasPendingRaw)
     {
-        if (std::optional<IniError> Error = commitEntry(State.PendingRaw, State.PendingRawLine, State))
+        infra::compat::Optional<IniError> Error = commitEntry(State.PendingRaw, State.PendingRawLine, State);
+        if (Error)
         {
             return Error;
         }
@@ -1212,22 +1249,22 @@ std::optional<IniError> Ini::finishParse(ParseState& State)
     }
     TailLines = std::move(State.PendingLines);
     Loaded = true;
-    return std::nullopt;
+    return infra::compat::nullopt;
 }
 
-std::expected<void, IniError> Ini::save(std::string_view FilePath) const
+infra::serde_detail::Expected<void, IniError> Ini::save(infra::compat::string_view FilePath) const
 {
-    return writeIniFile(FilePath, serialize());
+    return writeIniFile(FilePath, ini_detail::toStringView(serialize()));
 }
 
-std::expected<void, IniError> Ini::save() const
+infra::serde_detail::Expected<void, IniError> Ini::save() const
 {
     if (SourcePath.empty())
     {
-        return std::unexpected(IniError{ IniError::Code::CannotOpenFile, 0,
-                                         "no source path (call save(FilePath))" });
+        return infra::serde_detail::unexpected(IniError{ IniError::Code::CannotOpenFile, 0,
+                                                  "no source path (call save(FilePath))" });
     }
-    return save(SourcePath);
+    return save(ini_detail::toStringView(SourcePath));
 }
 
 bool Ini::isLoaded() const noexcept
@@ -1266,9 +1303,9 @@ std::string Ini::serialize() const
 
         appendLines(Out, Sec.HeaderLines);
         Out.push_back('[');
-        if (needsSectionQuoting(Name, Checker.policy().ExtraSectionNameChars))
+        if (needsSectionQuoting(ini_detail::toStringView(Name), Checker.policy().ExtraSectionNameChars))
         {
-            Out += quoteSectionName(Name);
+            Out += quoteSectionName(ini_detail::toStringView(Name));
         }
         else
         {
@@ -1299,42 +1336,46 @@ std::string Ini::flash()
     const std::string Text = serialize();
 
     LineBuffer.clear();
-    std::string_view Remaining = Text;
+    infra::compat::string_view Remaining = ini_detail::toStringView(Text);
     while (!Remaining.empty())
     {
         const std::size_t Newline = Remaining.find('\n');
         LineBuffer.emplace_back(
-            (Newline == std::string_view::npos) ? Remaining : Remaining.substr(0, Newline));
+            (Newline == infra::compat::string_view::npos)
+                ? ini_detail::viewToString(Remaining)
+                : ini_detail::viewToString(infra::compat::string_view(Remaining.data(), Newline)));
         Remaining =
-            (Newline == std::string_view::npos) ? std::string_view{} : Remaining.substr(Newline + 1);
+            (Newline == infra::compat::string_view::npos)
+                ? infra::compat::string_view{}
+                : Remaining.substr(Newline + 1);
     }
     return Text;
 }
 
-const IniSection* Ini::findSection(std::string_view SectionName) const noexcept
+const IniSection* Ini::findSection(infra::compat::string_view SectionName) const noexcept
 {
-    const auto It = Sections.find(SectionName);
+    const auto It = Sections.find(ini_detail::viewToString(SectionName));
     return It == Sections.end() ? nullptr : &It->second;
 }
 
-IniSection* Ini::findSection(std::string_view SectionName) noexcept
+IniSection* Ini::findSection(infra::compat::string_view SectionName) noexcept
 {
-    const auto It = Sections.find(SectionName);
+    const auto It = Sections.find(ini_detail::viewToString(SectionName));
     return It == Sections.end() ? nullptr : &It->second;
 }
 
-std::size_t Ini::findKeyIndex(const KeyValueType& Entries, std::string_view Key) const noexcept
+std::size_t Ini::findKeyIndex(const KeyValueType& Entries, infra::compat::string_view Key) const noexcept
 {
     if (Checker.policy().KeyCaseMode == ECaseMode::Default)
     {
         for (std::size_t Index = 0; Index < Entries.size(); ++Index)
         {
-            if (Entries[Index].Key == Key)
+            if (ini_detail::toStringView(Entries[Index].Key) == Key)
             {
                 return Index;
             }
         }
-        return std::string_view::npos;
+        return infra::compat::string_view::npos;
     }
 
     const std::string Normalized = Checker.normalizeKey(Key);
@@ -1345,17 +1386,17 @@ std::size_t Ini::findKeyIndex(const KeyValueType& Entries, std::string_view Key)
             return Index;
         }
     }
-    return std::string_view::npos;
+    return infra::compat::string_view::npos;
 }
 
-const IniEntry* Ini::findEntry(std::string_view SectionName, std::string_view Key) const noexcept
+const IniEntry* Ini::findEntry(infra::compat::string_view SectionName, infra::compat::string_view Key) const noexcept
 {
     // 沿 [Child : Parent] 继承链查找, 带环保护
-    std::vector<std::string_view> Visited;
-    std::string_view Current = SectionName;
+    std::vector<infra::compat::string_view> Visited;
+    infra::compat::string_view Current = SectionName;
     while (true)
     {
-        for (const std::string_view Seen : Visited)
+        for (const infra::compat::string_view Seen : Visited)
         {
             if (Seen == Current)
             {
@@ -1364,13 +1405,13 @@ const IniEntry* Ini::findEntry(std::string_view SectionName, std::string_view Ke
         }
         Visited.push_back(Current);
 
-        const auto It = Sections.find(Current);
+        const auto It = Sections.find(ini_detail::viewToString(Current));
         if (It == Sections.end())
         {
             return nullptr;
         }
         const std::size_t Index = findKeyIndex(It->second.Entries, Key);
-        if (Index != std::string_view::npos)
+        if (Index != infra::compat::string_view::npos)
         {
             return &It->second.Entries[Index];
         }
@@ -1378,15 +1419,15 @@ const IniEntry* Ini::findEntry(std::string_view SectionName, std::string_view Ke
         {
             return nullptr;
         }
-        Current = *It->second.Parent;
+        Current = ini_detail::toStringView(*It->second.Parent);
     }
 }
 
-std::expected<void, IniError> Ini::fail(IniError Failure)
+infra::serde_detail::Expected<void, IniError> Ini::fail(IniError Failure)
 {
     Loaded = false;
     LastError = std::move(Failure);
-    return std::unexpected(LastError);
+    return infra::serde_detail::unexpected(LastError);
 }
 
 std::vector<std::string> Ini::sections() const
@@ -1394,7 +1435,7 @@ std::vector<std::string> Ini::sections() const
     return SectionOrder;
 }
 
-std::vector<std::string> Ini::keys(std::string_view SectionName) const
+std::vector<std::string> Ini::keys(infra::compat::string_view SectionName) const
 {
     std::vector<std::string> Result;
     const IniSection* Sec = findSection(SectionName);
@@ -1410,58 +1451,61 @@ std::vector<std::string> Ini::keys(std::string_view SectionName) const
     return Result;
 }
 
-const IniSection* Ini::section(std::string_view SectionName) const noexcept
+const IniSection* Ini::section(infra::compat::string_view SectionName) const noexcept
 {
     return findSection(SectionName);
 }
 
-bool Ini::hasSection(std::string_view SectionName) const noexcept
+bool Ini::hasSection(infra::compat::string_view SectionName) const noexcept
 {
-    return Sections.find(SectionName) != Sections.end();
+    return Sections.find(ini_detail::viewToString(SectionName)) != Sections.end();
 }
 
-bool Ini::hasKey(std::string_view SectionName, std::string_view Key) const noexcept
+bool Ini::hasKey(infra::compat::string_view SectionName, infra::compat::string_view Key) const noexcept
 {
     return findEntry(SectionName, Key) != nullptr;
 }
 
-std::optional<IniVariant> Ini::getVariant(std::string_view SectionName,
-                                          std::string_view Key) const
+infra::compat::Optional<IniVariant> Ini::getVariant(infra::compat::string_view SectionName,
+                                                    infra::compat::string_view Key) const
 {
     const IniEntry* Entry = findEntry(SectionName, Key);
     if (Entry == nullptr)
     {
-        return std::nullopt;
+        return infra::compat::nullopt;
     }
     return Entry->Value;
 }
 
-std::expected<void, IniError> Ini::set(std::string_view SectionName, std::string_view Key,
-                                       std::string_view Value)
+infra::serde_detail::Expected<void, IniError> Ini::set(infra::compat::string_view SectionName, infra::compat::string_view Key,
+                                                infra::compat::string_view Value)
 {
-    if (std::optional<IniError> Check = Checker.checkSectionName(SectionName))
+    infra::compat::Optional<IniError> Check = Checker.checkSectionName(SectionName);
+    if (Check)
     {
         LastError = std::move(*Check);
-        return std::unexpected(LastError);
+        return infra::serde_detail::unexpected(LastError);
     }
 
     IniKeyValueRaw Raw;
-    Raw.Key.assign(Key);
-    Raw.Value.assign(Value);
+    Raw.Key.assign(Key.data(), Key.size());
+    Raw.Value.assign(Value.data(), Value.size());
     Raw.HasDelimiter = true;
-    if (std::optional<IniError> Check = Checker.checkKeyValue(Raw))
+    infra::compat::Optional<IniError> CheckKey = Checker.checkKeyValue(Raw);
+    if (CheckKey)
     {
-        LastError = std::move(*Check);
-        return std::unexpected(LastError);
+        LastError = std::move(*CheckKey);
+        return infra::serde_detail::unexpected(LastError);
     }
     Checker.finalize(Raw);
 
     if (Checker.policy().EnableInterpolation)
     {
-        if (std::optional<IniError> Error = interpolate(Raw.Value, Checker.policy().StrictInterpolation))
+        infra::compat::Optional<IniError> Error = interpolate(Raw.Value, Checker.policy().StrictInterpolation);
+        if (Error)
         {
             LastError = std::move(*Error);
-            return std::unexpected(LastError);
+            return infra::serde_detail::unexpected(LastError);
         }
     }
 
@@ -1471,9 +1515,9 @@ std::expected<void, IniError> Ini::set(std::string_view SectionName, std::string
 
     if (!hasSection(SectionName))
     {
-        SectionOrder.push_back(std::string(SectionName));
+        SectionOrder.push_back(ini_detail::viewToString(SectionName));
     }
-    IniSection& Sec = Sections[std::string(SectionName)];
+    IniSection& Sec = Sections[ini_detail::viewToString(SectionName)];
     upsertEntry(Sec, std::move(Entry), Checker.policy().DuplicateKeysAsList);
 
     LineBuffer.clear();
@@ -1481,15 +1525,15 @@ std::expected<void, IniError> Ini::set(std::string_view SectionName, std::string
     return {};
 }
 
-bool Ini::erase(std::string_view SectionName, std::string_view Key) noexcept
+bool Ini::erase(infra::compat::string_view SectionName, infra::compat::string_view Key) noexcept
 {
-    const auto It = Sections.find(SectionName);
+    const auto It = Sections.find(ini_detail::viewToString(SectionName));
     if (It == Sections.end())
     {
         return false;
     }
     const std::size_t Index = findKeyIndex(It->second.Entries, Key);
-    if (Index == std::string_view::npos)
+    if (Index == infra::compat::string_view::npos)
     {
         return false;
     }
@@ -1499,15 +1543,23 @@ bool Ini::erase(std::string_view SectionName, std::string_view Key) noexcept
     return true;
 }
 
-bool Ini::eraseSection(std::string_view SectionName) noexcept
+bool Ini::eraseSection(infra::compat::string_view SectionName) noexcept
 {
-    const auto It = Sections.find(SectionName);
+    const auto It = Sections.find(ini_detail::viewToString(SectionName));
     if (It == Sections.end())
     {
         return false;
     }
     Sections.erase(It);
-    std::erase(SectionOrder, SectionName);
+    // @notice std::erase(容器, 值) 为 C++20, 这里按 C++11 写法等价替换
+    for (std::vector<std::string>::iterator Pos = SectionOrder.begin(); Pos != SectionOrder.end(); ++Pos)
+    {
+        if (*Pos == ini_detail::viewToString(SectionName))
+        {
+            SectionOrder.erase(Pos);
+            break;
+        }
+    }
 
     LineBuffer.clear();
     return true;
@@ -1519,7 +1571,7 @@ void Ini::merge(const Ini& Other)
     {
         const auto& Src = Other.Sections.at(SectionName);
 
-        IniSection* Dst = findSection(SectionName);
+        IniSection* Dst = findSection(ini_detail::toStringView(SectionName));
         if (Dst == nullptr)
         {
             SectionOrder.push_back(SectionName);

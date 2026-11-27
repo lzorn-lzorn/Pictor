@@ -1,5 +1,6 @@
 #pragma once
 
+#include <infra/common/VersionCompatibility.hpp>
 #include <infra/reflect/TypeInfo.hpp>
 #include <typeinfo>
 #include <utility>
@@ -9,10 +10,11 @@ class ReflectObject {
 public:
     ReflectObject() noexcept = default;
 
-    template<typename Ty>
-        requires (!std::is_same_v<std::decay_t<Ty>, ReflectObject>)
+    // @notice SFINAE 必须保留，否则该模板会抢占拷贝构造；
+    //         原 C++20 requires 改为 enable_if（C++11 兼容）。
+    template<typename Ty, typename = infra::compat::enable_if_t<!std::is_same<infra::compat::decay_t<Ty>, ReflectObject>::value> >
     ReflectObject(Ty &&Value) {
-        using U = std::decay_t<Ty>;
+        using U = infra::compat::decay_t<Ty>;
         Ptr     = new U(std::forward<Ty>(Value));
         Id      = &TypeInfo<U>::TypeId;
         Vtable  = &VTable<U>::get();
@@ -64,18 +66,18 @@ public:
         reset();
     }
 
-    [[nodiscard]] bool hasValue() const noexcept {
+    PICTOR_NODISCARD bool hasValue() const noexcept {
         return Ptr != nullptr;
     }
 
     template<typename Ty>
-    [[nodiscard]] bool is() const noexcept {
-        return Ptr != nullptr && Id == &TypeInfo<std::decay_t<Ty> >::TypeId;
+    PICTOR_NODISCARD bool is() const noexcept {
+        return Ptr != nullptr && Id == &TypeInfo<infra::compat::decay_t<Ty> >::TypeId;
     }
 
     template<typename Ty>
     Ty &cast() {
-        using U = std::decay_t<Ty>;
+        using U = infra::compat::decay_t<Ty>;
         if (!is<U>()) {
             throw std::bad_cast();
         }
@@ -84,7 +86,7 @@ public:
 
     template<typename Ty>
     const Ty &cast() const {
-        using U = std::decay_t<Ty>;
+        using U = infra::compat::decay_t<Ty>;
         if (!is<U>()) {
             throw std::bad_cast();
         }

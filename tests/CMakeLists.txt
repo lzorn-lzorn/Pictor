@@ -1,55 +1,47 @@
-# Tests — lightweight test executables registered with CTest.
+# Tests — 全部单元测试与性能基准合并为【单一】可执行目标 InfraTests。
 #
-# No external framework: every test uses the tiny harness in TestFramework.h.
-# Test data files (e.g. config.ini) live in this directory and are located
-# through the TEST_DATA_DIR compile definition, so tests work no matter which
-# working directory they are launched from (CTest, an IDE, or a shell).
+# 刻意不使用 CTest 注册（避免为每个测试生成额外构建目标）；所有测试与基准
+# 编译进同一个二进制，运行时通过子命令选择：
 #
-# `InfraTests` is a convenience target that builds every test executable at
-# once; the tests themselves run through CTest (`ctest --test-dir <build>`).
-set(INFRA_TEST_TARGETS "")
+#   InfraTests           运行全部单元测试（等价于 `InfraTests test`）
+#   InfraTests test ...  单元测试（--filter / --seed / --repeat / --list-tests / --out-dir）
+#   InfraTests bench ... 性能基准（--filter / --min-time-ms / --iterations / --list / --out-dir）
+#   InfraTests all       先跑单元测试，再跑性能基准
+#
+# 测试数据（config.ini）通过 TEST_DATA_DIR 定位；测试与基准报告默认写入
+# TEST_OUTPUT_DIR（本目录在构建树中的对应位置），也可用 --out-dir 覆盖。
+#
+# 目录结构：
+#   TestMain.cpp            统一入口（子命令分发）
+#   TestFramework.h         轻量测试框架（断言、注册、控制台 + txt/XML 报告）
+#   containers/             FlatHashTable / LinkedHashTable / IntrusiveRBTree 测试
+#   serde/                  Ini / SerdeEngine 测试（依赖 tests/config.ini）
+#   benchmark/              性能基准：哈希表 vs std::unordered_map，红黑树 vs std::set
 
-function(pictor_add_test TestName)
-    add_executable(${TestName} ${ARGN})
+add_executable(InfraTests
+    TestMain.cpp
+    containers/FlatHashTableTests.cpp
+    containers/LinkedHashTableTests.cpp
+    containers/IntrusiveRBTreeTests.cpp
+    serde/IniFileReaderTests.cpp
+    serde/SerdeEngineTests.cpp
+    benchmark/BenchmarkMain.cpp
+    benchmark/HashTableBenchmark.cpp
+    benchmark/RBTreeBenchmark.cpp
+)
 
-    target_link_libraries(${TestName} PRIVATE Infra)
-    target_include_directories(${TestName} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(${TestName} PRIVATE cxx_std_23)
-    target_compile_definitions(${TestName} PRIVATE
-        TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-        TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(InfraTests PRIVATE Infra)
+target_include_directories(InfraTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(InfraTests PRIVATE cxx_std_23)
+target_compile_definitions(InfraTests PRIVATE
+    TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+    PICTOR_TEST_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+    PICTOR_TEST_COMPILER="${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}"
+)
 
-    if(MSVC)
-        target_compile_options(${TestName} PRIVATE /W4 /utf-8)
-    else()
-        target_compile_options(${TestName} PRIVATE -Wall -Wextra)
-    endif()
-
-    add_test(NAME ${TestName} COMMAND ${TestName})
-    set(INFRA_TEST_TARGETS ${INFRA_TEST_TARGETS} ${TestName} PARENT_SCOPE)
-endfunction()
-
-# serde module tests
-pictor_add_test(IniFileReaderTests IniFileReaderTests.cpp)
-pictor_add_test(SerdeEngineTests SerdeEngineTests.cpp)
-
-# containers module tests
-pictor_add_test(IntrusiveRBTreeTests IntrusiveRBTreeTests.cpp)
-pictor_add_test(LinkedHashTableTests LinkedHashTableTests.cpp)
-pictor_add_test(FlatHashTableTests FlatHashTableTests.cpp)
-
-# Hash-table benchmark — uses the project Bm framework (infra/tracer/Benchmark.hpp).
-# Built together with InfraTests but NOT registered with CTest; run manually:
-#   HashTableBenchmark.exe [output.json]
-add_executable(HashTableBenchmark HashTableBenchmark.cpp)
-target_link_libraries(HashTableBenchmark PRIVATE Infra)
-target_include_directories(HashTableBenchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(HashTableBenchmark PRIVATE cxx_std_23)
 if(MSVC)
-    target_compile_options(HashTableBenchmark PRIVATE /W4 /utf-8)
+    target_compile_options(InfraTests PRIVATE /W4 /utf-8)
 else()
-    target_compile_options(HashTableBenchmark PRIVATE -Wall -Wextra)
+    target_compile_options(InfraTests PRIVATE -Wall -Wextra)
 endif()
-
-add_custom_target(InfraTests DEPENDS ${INFRA_TEST_TARGETS})
-add_dependencies(InfraTests HashTableBenchmark)

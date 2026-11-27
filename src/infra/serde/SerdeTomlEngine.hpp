@@ -4,22 +4,30 @@
 // SerdeADT <-> TOML 文本。TOML 无原生 binary / datetime / null 支持,
 // 相应值在序列化时跳过, 读取时映射为字符串(日期时间)。
 //
+// C++11 兼容(2026/11 重构): vendored toml++ 自身 #error 要求 C++17。
+// C++17 起保持原实现; C++11/14 下类接口照常声明, parse/serialize 抛出
+// std::logic_error 优雅降级(SerdeEngineFactory 在 C++11 下不注册本引擎)。
+//
 
 #ifndef INFRA_SERDE_TOML_ENGINE_HPP
 #define INFRA_SERDE_TOML_ENGINE_HPP
 
-#include <sstream>
 #include <stdexcept>
 #include <string>
 
+#include <infra/common/VersionCompatibility.hpp>
 #include <infra/serde/SerdeEngine.hpp>
-#include <infra/serde/detail/vendor/toml.hpp>
+
+#if PICTOR_HAS_CPP17
+
+#  include <sstream>
+#  include <infra/serde/detail/vendor/toml.hpp>
 
 namespace infra{
 // ========================= TOML 后端 =========================
 class SerdeTomlEngine : public SerdeEngine {
 public:
-    SerdeADT parse(std::string_view Text) const override {
+    SerdeADT parse(infra::compat::string_view Text) const override {
         try {
             // 同样先规整 \n \t / BOM / CRLF 再交给解析器
             toml::table Tbl = toml::parse(getNormalizeText(Text)); // TOML_EXCEPTIONS=1 时 parse 直接返回 table，失败抛异常
@@ -142,5 +150,27 @@ private:
     }
 };
 } // namespace infra
+
+#else // !PICTOR_HAS_CPP17
+
+// @notice C++11 优雅降级: vendored toml++ 自身 #error 要求 C++17。C++11/14 下
+//         类接口照常声明, parse/serialize 抛出 std::logic_error;
+//         SerdeEngineFactory 亦不注册本引擎(getEngineFor 返回 nullptr)。
+namespace infra{
+class SerdeTomlEngine : public SerdeEngine {
+public:
+    SerdeADT parse(infra::compat::string_view Text) const override {
+        (void) Text;
+        throw std::logic_error("TOML 引擎需要 C++17");
+    }
+
+    std::string serialize(const SerdeADT &Adt) const override {
+        (void) Adt;
+        throw std::logic_error("TOML 引擎需要 C++17");
+    }
+};
+} // namespace infra
+
+#endif // PICTOR_HAS_CPP17
 
 #endif // INFRA_SERDE_TOML_ENGINE_HPP

@@ -22,33 +22,35 @@
 #   include <unistd.h>
 #endif
 
-std::expected<std::string, IniError> readIniFile(std::string_view FilePath)
+infra::serde_detail::Expected<std::string, IniError> readIniFile(infra::compat::string_view FilePath)
 {
-    std::ifstream File(std::string(FilePath), std::ios::binary);
+    std::ifstream File(ini_detail::viewToString(FilePath), std::ios::binary);
     if (!File.is_open())
     {
-        return std::unexpected(
-            IniError{ IniError::Code::CannotOpenFile, 0, std::string(FilePath) });
+        return infra::serde_detail::unexpected(
+            IniError{ IniError::Code::CannotOpenFile, 0, ini_detail::viewToString(FilePath) });
     }
 
     File.seekg(0, std::ios::end);
     const std::streamoff Size = File.tellg();
     if (Size < 0)
     {
-        return std::unexpected(
-            IniError{ IniError::Code::ReadFailed, 0, std::string(FilePath) });
+        return infra::serde_detail::unexpected(
+            IniError{ IniError::Code::ReadFailed, 0, ini_detail::viewToString(FilePath) });
     }
     File.seekg(0, std::ios::beg);
 
     std::string Content(static_cast<std::size_t>(Size), '\0');
-    if (Size > 0 && !File.read(Content.data(), Size))
+    // @notice std::string::data() 在 C++11 只返回 const char*, 用 &Content[0] 取得可写首址
+    if (Size > 0 && !File.read(&Content[0], Size))
     {
-        return std::unexpected(
-            IniError{ IniError::Code::ReadFailed, 0, std::string(FilePath) });
+        return infra::serde_detail::unexpected(
+            IniError{ IniError::Code::ReadFailed, 0, ini_detail::viewToString(FilePath) });
     }
 
     // 剥离 UTF-8 BOM(部分编辑器会给 .ini 加上)。
-    if (Content.starts_with("\xEF\xBB\xBF"))
+    // @notice std::string::starts_with 为 C++20, 这里用 compare 兼容 C++11
+    if (Content.compare(0, 3, "\xEF\xBB\xBF") == 0)
     {
         Content.erase(0, 3);
     }
@@ -56,21 +58,21 @@ std::expected<std::string, IniError> readIniFile(std::string_view FilePath)
     return Content;
 }
 
-std::expected<void, IniError> writeIniFile(std::string_view FilePath, std::string_view Content)
+infra::serde_detail::Expected<void, IniError> writeIniFile(infra::compat::string_view FilePath, infra::compat::string_view Content)
 {
-    std::ofstream File(std::string(FilePath), std::ios::binary | std::ios::trunc);
+    std::ofstream File(ini_detail::viewToString(FilePath), std::ios::binary | std::ios::trunc);
     if (!File.is_open())
     {
-        return std::unexpected(
-            IniError{ IniError::Code::WriteFailed, 0, std::string(FilePath) });
+        return infra::serde_detail::unexpected(
+            IniError{ IniError::Code::WriteFailed, 0, ini_detail::viewToString(FilePath) });
     }
 
     File.write(Content.data(), static_cast<std::streamsize>(Content.size()));
     File.flush();
     if (!File)
     {
-        return std::unexpected(
-            IniError{ IniError::Code::WriteFailed, 0, std::string(FilePath) });
+        return infra::serde_detail::unexpected(
+            IniError{ IniError::Code::WriteFailed, 0, ini_detail::viewToString(FilePath) });
     }
     return {};
 }
@@ -99,14 +101,18 @@ IniMappedFile::~IniMappedFile()
     close();
 }
 
-std::string_view IniMappedFile::view() const noexcept
+infra::compat::string_view IniMappedFile::view() const noexcept
 {
 #if defined(_WIN32)
-    return View == nullptr ? std::string_view{} : std::string_view{ static_cast<const char*>(View), Size };
+    return View == nullptr
+               ? infra::compat::string_view{}
+               : infra::compat::string_view{ static_cast<const char*>(View), Size };
 #elif defined(__unix__) || defined(__APPLE__)
-    return Data == nullptr ? std::string_view{} : std::string_view{ Data, Size };
+    return Data == nullptr
+               ? infra::compat::string_view{}
+               : infra::compat::string_view{ Data, Size };
 #else
-    return Owned;
+    return infra::compat::string_view{ Owned.data(), Owned.size() };
 #endif
 }
 
@@ -170,9 +176,9 @@ void IniMappedFile::steal(IniMappedFile& Other) noexcept
     Other.Valid = false;
 }
 
-std::expected<IniMappedFile, IniError> mapIniFile(std::string_view FilePath)
+infra::serde_detail::Expected<IniMappedFile, IniError> mapIniFile(infra::compat::string_view FilePath)
 {
-    const std::string Path(FilePath);
+    const std::string Path = ini_detail::viewToString(FilePath);
 
 #if defined(_WIN32)
     HANDLE FileHandle = ::CreateFileA(Path.c_str(), GENERIC_READ,
@@ -180,7 +186,7 @@ std::expected<IniMappedFile, IniError> mapIniFile(std::string_view FilePath)
                                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (FileHandle == INVALID_HANDLE_VALUE)
     {
-        return std::unexpected(
+        return infra::serde_detail::unexpected(
             IniError{ IniError::Code::CannotOpenFile, 0, Path });
     }
 
@@ -188,7 +194,7 @@ std::expected<IniMappedFile, IniError> mapIniFile(std::string_view FilePath)
     if (!::GetFileSizeEx(FileHandle, &FileSize))
     {
         ::CloseHandle(FileHandle);
-        return std::unexpected(IniError{ IniError::Code::ReadFailed, 0, Path });
+        return infra::serde_detail::unexpected(IniError{ IniError::Code::ReadFailed, 0, Path });
     }
     if (FileSize.QuadPart == 0)
     {
@@ -203,7 +209,7 @@ std::expected<IniMappedFile, IniError> mapIniFile(std::string_view FilePath)
     if (MappingHandle == nullptr)
     {
         ::CloseHandle(FileHandle);
-        return std::unexpected(IniError{ IniError::Code::ReadFailed, 0, Path });
+        return infra::serde_detail::unexpected(IniError{ IniError::Code::ReadFailed, 0, Path });
     }
 
     void* View = ::MapViewOfFile(MappingHandle, FILE_MAP_READ, 0, 0, 0);
@@ -211,7 +217,7 @@ std::expected<IniMappedFile, IniError> mapIniFile(std::string_view FilePath)
     {
         ::CloseHandle(MappingHandle);
         ::CloseHandle(FileHandle);
-        return std::unexpected(IniError{ IniError::Code::ReadFailed, 0, Path });
+        return infra::serde_detail::unexpected(IniError{ IniError::Code::ReadFailed, 0, Path });
     }
 
     IniMappedFile Result;
@@ -226,14 +232,14 @@ std::expected<IniMappedFile, IniError> mapIniFile(std::string_view FilePath)
     const int Fd = ::open(Path.c_str(), O_RDONLY);
     if (Fd < 0)
     {
-        return std::unexpected(IniError{ IniError::Code::CannotOpenFile, 0, Path });
+        return infra::serde_detail::unexpected(IniError{ IniError::Code::CannotOpenFile, 0, Path });
     }
 
     struct stat Stat{};
     if (::fstat(Fd, &Stat) != 0)
     {
         ::close(Fd);
-        return std::unexpected(IniError{ IniError::Code::ReadFailed, 0, Path });
+        return infra::serde_detail::unexpected(IniError{ IniError::Code::ReadFailed, 0, Path });
     }
     if (Stat.st_size == 0)
     {
@@ -248,7 +254,7 @@ std::expected<IniMappedFile, IniError> mapIniFile(std::string_view FilePath)
     if (View == MAP_FAILED)
     {
         ::close(Fd);
-        return std::unexpected(IniError{ IniError::Code::ReadFailed, 0, Path });
+        return infra::serde_detail::unexpected(IniError{ IniError::Code::ReadFailed, 0, Path });
     }
 
     IniMappedFile Result;
@@ -260,10 +266,10 @@ std::expected<IniMappedFile, IniError> mapIniFile(std::string_view FilePath)
 
 #else
     // 其余平台: 退化为普通读取(内容由对象持有)
-    std::expected<std::string, IniError> Content = readIniFile(FilePath);
+    infra::serde_detail::Expected<std::string, IniError> Content = readIniFile(FilePath);
     if (!Content)
     {
-        return std::unexpected(Content.error());
+        return infra::serde_detail::unexpected(Content.error());
     }
     IniMappedFile Result;
     Result.Owned = std::move(*Content);

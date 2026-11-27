@@ -15,6 +15,9 @@
 #include <typeinfo>
 #include <utility>
 
+// 统一跨版本兼容层: PICTOR_NODISCARD / infra::compat::launder 等(C++11 ~ C++23)。
+#include <infra/common/VersionCompatibility.hpp>
+
 // std::bad_cast / std::type_info 声明于 <typeinfo>, 该头文件在任何 RTTI 设置下都可用;
 // 只有 typeid / dynamic_cast 这类语言特性才依赖 RTTI, 因此这里始终引入是安全的,
 // 也让 doAnyCast 抛出的 std::bad_cast 在 -fno-rtti 下依然可用。
@@ -30,13 +33,6 @@
 #   define ANY_EXPORT __attribute__((visibility("default")))
 #else
 #   define ANY_EXPORT
-#endif
-
-// [[nodiscard]] 是 C++17 特性, C++11/14 下退化为空(不改变功能)。
-#if __cplusplus >= 201703L
-#   define ANY_NODISCARD [[nodiscard]]
-#else
-#   define ANY_NODISCARD
 #endif
 
 namespace any_detail
@@ -55,29 +51,13 @@ using TypeId_t = const void*;
     enum class Byte : unsigned char {};
 #endif
 
-// std::launder (C++17) ->  C++11 无 lifetime 优化, 直接返回指针即可。
+// std::launder (C++17) ->  统一经 infra::compat::launder: C++17 起调用 std::launder,
+// C++11 无 lifetime 优化, 直接返回指针即可。
 // 注意: 命名为 launderPtr 以免与 std::launder 经 ADL 产生歧义(C++17 起)。
 template <typename T>
 T* launderPtr(T* P) noexcept
 {
-#if defined(__cpp_lib_launder) && __cpp_lib_launder >= 201606L
-    return std::launder(P);
-#else
-    return P;
-#endif
-}
-
-// std::construct_at / std::destroy_at (C++20) ->  placement new / 显式析构
-template <typename T, typename... Args>
-T* constructAt(T* P, Args&&... InArgs)
-{
-    return ::new (static_cast<void*>(P)) T(std::forward<Args>(InArgs)...);
-}
-
-template <typename T>
-void destroyAt(T* P) noexcept
-{
-    P->~T();
+    return infra::compat::launder(P);
 }
 
 // std::in_place_type_t (C++17) ->  自定义等价的标签类型
@@ -233,17 +213,17 @@ private:
     template <typename... Args>
     static void constructImpl(Storage_t& Storage, std::true_type, Args&&... InArgs)
     {
-        constructAt(reinterpret_cast<T*>(Storage.Buffer), std::forward<Args>(InArgs)...);
+        infra::compat::construct_at(reinterpret_cast<T*>(Storage.Buffer), std::forward<Args>(InArgs)...);
     }
 
     static void destroyImpl(Storage_t& Storage, std::true_type) noexcept
     {
-        destroyAt(getPtr(Storage));
+        infra::compat::destroy_at(getPtr(Storage));
     }
 
     static void copyImpl(Storage_t& Dst, Storage_t const& Src, std::true_type)
     {
-        constructAt(reinterpret_cast<T*>(Dst.Buffer), *getPtr(Src));
+        infra::compat::construct_at(reinterpret_cast<T*>(Dst.Buffer), *getPtr(Src));
     }
 
     static void moveImpl(Storage_t& Dst, Storage_t& Src, std::true_type) noexcept
@@ -251,8 +231,8 @@ private:
         // SBO 无法像堆分配那样"偷指针", 只能搬移构造到 Dst, 并立刻结束源对象生命周期;
         // 否则源对象(即便已搬移)的析构永远不会被调用, 造成资源泄漏。
         // 搬移构造是 noexcept 的(由 IsUseSmallBufferOptimize 保证), 析构也是 noexcept。
-        constructAt(reinterpret_cast<T*>(Dst.Buffer), std::move(*getPtr(Src)));
-        destroyAt(getPtr(Src));
+        infra::compat::construct_at(reinterpret_cast<T*>(Dst.Buffer), std::move(*getPtr(Src)));
+        infra::compat::destroy_at(getPtr(Src));
     }
 
     // ---- 堆分配分支 (false_type) ----
@@ -468,13 +448,13 @@ public:
         Other = std::move(Tmp);
     }
 
-    ANY_NODISCARD bool hasValue() const noexcept { return VTable != nullptr; }
+    PICTOR_NODISCARD bool hasValue() const noexcept { return VTable != nullptr; }
     explicit operator bool() const noexcept { return hasValue(); }
 
-    ANY_NODISCARD TypeId_t getTypeId() const noexcept { return VTable ? VTable->GetTypeId() : nullptr; }
+    PICTOR_NODISCARD TypeId_t getTypeId() const noexcept { return VTable ? VTable->GetTypeId() : nullptr; }
 
 #if HAS_RTTI
-    ANY_NODISCARD const std::type_info& type() const noexcept
+    PICTOR_NODISCARD const std::type_info& type() const noexcept
     {
         return VTable ? VTable->GetTypeInfo() : typeid(void);
     }
@@ -500,7 +480,7 @@ public:
     }
 
 private:
-    ANY_NODISCARD bool CanMemcpySwap() const noexcept
+    PICTOR_NODISCARD bool CanMemcpySwap() const noexcept
     {
         // 空 Any 的 Storage 只是 null 指针, 字节交换安全; 否则看该类型对应的存储策略。
         return !VTable || VTable->CanMemcpy;

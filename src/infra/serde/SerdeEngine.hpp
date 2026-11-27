@@ -8,14 +8,17 @@
 //   - SerdeIniEngine.hpp   (INI 后端)
 // 后端工厂见 SerdeEngineFactory.hpp; SerdeServer 通过 getEngineFor() 分派。
 //
+// C++11 兼容(2026/11 重构): string_view 统一走 infra::compat::string_view;
+// 文本规整逻辑不再使用 starts_with / remove_prefix 等 C++20 成员。
+//
 
 #ifndef INFRA_SERDE_ENGINE_HPP
 #define INFRA_SERDE_ENGINE_HPP
 #pragma once
 
 #include <string>
-#include <string_view>
 
+#include <infra/common/VersionCompatibility.hpp>
 #include <infra/serde/SerdeADT.hpp>
 
 namespace infra{
@@ -33,7 +36,7 @@ enum class ESerdeBackend {
     Binary, // 直接将 SerdeADT 转化为二进制文件
 };
 
-inline std::string_view backendExtension(ESerdeBackend Backend) {
+inline infra::compat::string_view backendExtension(ESerdeBackend Backend) {
     switch (Backend) {
         case ESerdeBackend::Json:
             return "json";
@@ -57,10 +60,12 @@ inline bool isTextSpace(char C) noexcept {
     return C == ' ' || C == '\t' || C == '\n' || C == '\r' || C == '\f' || C == '\v';
 }
 
-inline std::string getNormalizeText(std::string_view Text) {
-    constexpr std::string_view Bom = "\xEF\xBB\xBF"; // UTF-8 BOM
-    if (Text.starts_with(Bom)) {
-        Text.remove_prefix(Bom.size());
+inline std::string getNormalizeText(infra::compat::string_view Text) {
+    constexpr infra::compat::string_view Bom = "\xEF\xBB\xBF"; // UTF-8 BOM
+    // @notice starts_with / remove_prefix 为 C++20 成员, 这里按 C++11 可用的写法判断
+    if (Text.size() >= Bom.size() &&
+        infra::compat::string_view(Text.data(), Bom.size()) == Bom) {
+        Text = Text.substr(Bom.size());
     }
 
     std::string Out;
@@ -90,9 +95,9 @@ class SerdeEngine {
 public:
     virtual ~SerdeEngine() = default;
 
-    [[nodiscard]] virtual SerdeADT parse(std::string_view Text) const = 0;
+    PICTOR_NODISCARD virtual SerdeADT parse(infra::compat::string_view Text) const = 0;
 
-    [[nodiscard]] virtual std::string serialize(const SerdeADT &Adt) const = 0;
+    PICTOR_NODISCARD virtual std::string serialize(const SerdeADT &Adt) const = 0;
 };
 } // namespace infra
 

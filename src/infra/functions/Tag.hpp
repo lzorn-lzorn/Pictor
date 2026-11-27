@@ -9,14 +9,13 @@
 #pragma once
 
 #include <string>
-#include <string_view>
 
+#include <infra/common/VersionCompatibility.hpp>
 
 #include <algorithm>
 #include <cstddef>    // size_t / std::ptrdiff_t
 #include <cstdint>    // int32_t
 #include <functional> // std::hash
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -62,7 +61,7 @@ public:
         return Tags[N];
     }
 
-    [[nodiscard]] std::string at(size_t N) const {
+    PICTOR_NODISCARD std::string at(size_t N) const {
         return Tags.at(N);
     }
 
@@ -74,11 +73,11 @@ public:
         return Tags.end();
     }
 
-    [[nodiscard]] const_iterator begin() const noexcept {
+    PICTOR_NODISCARD const_iterator begin() const noexcept {
         return Tags.begin();
     }
 
-    [[nodiscard]] const_iterator end() const noexcept {
+    PICTOR_NODISCARD const_iterator end() const noexcept {
         return Tags.end();
     }
 
@@ -90,27 +89,27 @@ public:
         return Tags.rend();
     }
 
-    [[nodiscard]] const_reverse_iterator rbegin() const noexcept {
+    PICTOR_NODISCARD const_reverse_iterator rbegin() const noexcept {
         return Tags.rbegin();
     }
 
-    [[nodiscard]] const_reverse_iterator rend() const noexcept {
+    PICTOR_NODISCARD const_reverse_iterator rend() const noexcept {
         return Tags.rend();
     }
 
-    [[nodiscard]] const_iterator cbegin() const noexcept {
+    PICTOR_NODISCARD const_iterator cbegin() const noexcept {
         return Tags.cbegin();
     }
 
-    [[nodiscard]] const_iterator cend() const noexcept {
+    PICTOR_NODISCARD const_iterator cend() const noexcept {
         return Tags.cend();
     }
 
-    [[nodiscard]] const_reverse_iterator crbegin() const noexcept {
+    PICTOR_NODISCARD const_reverse_iterator crbegin() const noexcept {
         return Tags.crbegin();
     }
 
-    [[nodiscard]] const_reverse_iterator crend() const noexcept {
+    PICTOR_NODISCARD const_reverse_iterator crend() const noexcept {
         return Tags.crend();
     }
 
@@ -118,7 +117,7 @@ public:
         return Tags.front();
     }
 
-    [[nodiscard]] const_reference front() const {
+    PICTOR_NODISCARD const_reference front() const {
         return Tags.front();
     }
 
@@ -126,7 +125,7 @@ public:
         return Tags.back();
     }
 
-    [[nodiscard]] const_reference back() const {
+    PICTOR_NODISCARD const_reference back() const {
         return Tags.back();
     }
 
@@ -134,12 +133,12 @@ public:
         return Tags == Other.Tags;
     }
 
-    [[nodiscard]] bool has(const std::string &OneTag) const noexcept {
-        return std::ranges::find(Tags, OneTag) != Tags.end();
+    PICTOR_NODISCARD bool has(const std::string &OneTag) const noexcept {
+        return std::find(Tags.begin(), Tags.end(), OneTag) != Tags.end();
     }
 
 
-    [[nodiscard]] std::string get() const noexcept {
+    PICTOR_NODISCARD std::string get() const noexcept {
         std::string Result;
         // 预分配：各段长度之和 + 分隔符数量（段数 - 1）
         size_t Total = Tags.empty() ? 0 : Tags.size() - 1;
@@ -162,8 +161,8 @@ public:
      * @usage this: "AAAA.BBBB.CCCC" other: "AAAA.BBBB.DDDD" 返回 1
      * @return 返回第一个根节点 Tag 的序号
      */
-    [[nodiscard]] std::optional<int32_t> getFirstSameRoot([[maybe_unused]] const Tag &InTag) const noexcept {
-        return std::nullopt;
+    PICTOR_NODISCARD infra::compat::Optional<int32_t> getFirstSameRoot(PICTOR_MAYBE_UNUSED const Tag &InTag) const noexcept {
+        return infra::compat::nullopt;
     }
 
 private:

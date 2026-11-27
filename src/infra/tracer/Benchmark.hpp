@@ -1,7 +1,7 @@
 /**
  * @file Benchmark.hpp
  *
- * @brief 极简的 C++14 单头文件 benchmark / 性能分析工具。
+ * @brief 极简的 C++11 单头文件 benchmark / 性能分析工具。
  *
  * @notice 整个库只由这一个头文件组成，仅依赖 C++ 标准库。提供两种互补的模式：
  *   - 迭代基准：注册一个 void() 函数，测量运行 N 次的耗时，序列化为 JSON。
@@ -1575,11 +1575,13 @@ public:
         }
 
         const Clock::time_point Now = Clock::now();
-        Checkpoints.push_back(CheckpointRecord{
-                                  CheckpointName,
-                                  Detail::getEpochNanoseconds(LastMark),
-                                  Detail::getNanosecondsBetween(LastMark, Now)
-                              });
+        // @notice C++11 下带默认成员初始化器的类型不是聚合体, 不能用花括号聚合
+        //         初始化, 因此先默认构造再逐字段赋值。
+        CheckpointRecord Record;
+        Record.Name               = CheckpointName;
+        Record.StartNanoseconds   = Detail::getEpochNanoseconds(LastMark);
+        Record.ElapsedNanoseconds = Detail::getNanosecondsBetween(LastMark, Now);
+        Checkpoints.push_back(Record);
         LastMark = Now;
     }
 

@@ -2,9 +2,10 @@
 # (e.g. SIMDControlByte). Header-only, no dependencies.
 add_library(InfraCommon INTERFACE
         SIMDControlByte.hpp
+        VersionCompatibility.hpp
 )
 
 # Expose the src root so consumers include headers with the "infra/" prefix,
 # e.g. #include <infra/common/SIMDControlByte.hpp>.
 target_include_directories(InfraCommon INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/../..)
-target_compile_features(InfraCommon INTERFACE cxx_std_23)
+target_compile_features(InfraCommon INTERFACE cxx_std_11)

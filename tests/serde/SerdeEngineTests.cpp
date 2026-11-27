@@ -186,8 +186,3 @@ PICTOR_TEST_CASE(SerdeServerEndToEndWithIniBackend)
     PICTOR_CHECK(std::filesystem::exists(TempRoot / "Saved" / "TestConfig.ini"));
     std::filesystem::remove_all(TempRoot);
 }
-
-int main()
-{
-    return ::PictorTest::runAll();
-}

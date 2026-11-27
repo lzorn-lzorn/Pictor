@@ -8,7 +8,7 @@
 //   * T 必须公开继承 RBNodeBase；
 //   * T 无需可复制/可移动（容器从不复制/移动元素; 即使 T 可复制, 副本也是未链接状态, 需自行 insert）。元素在容器内期间地址必须稳定、且生命周期必须长于容器;
 //   * 节点生命周期必须长于容器：节点须先于容器销毁前被移除或由调用方释放；
-//   * T 需可被 CompareCallable 排序；默认 std::less<> 为透明比较器, 支持异构查找
+//   * T 需可被 CompareCallable 排序；默认 rbtree_detail::TransparentLess 为透明比较器, 支持异构查找
 //     （find/getLowerBound/...）。
 //
 // 线程安全：容器非线程安全。并发修改, 或在另一线程读取时修改, 均为未定义行为。
@@ -24,6 +24,8 @@
 #include <iterator>
 #include <type_traits>
 #include <utility>
+
+#include <infra/common/VersionCompatibility.hpp>
 
 /**
  * @brief 侵入式红黑树节点基类。
@@ -60,17 +62,17 @@ public:
      * @brief 返回父节点指针（已剥离颜色位）。
      * @return 父节点指针；空树中的 header 或独立节点可能为 nullptr。
      */
-    [[nodiscard]] RBNodeBase *Parent() const noexcept {
+    PICTOR_NODISCARD RBNodeBase *Parent() const noexcept {
         return reinterpret_cast<RBNodeBase *>(ParentColor & ~static_cast<std::uintptr_t>(1));
     }
 
     /** @brief 是否为黑色节点。 @return true 表示黑色。 */
-    [[nodiscard]] bool isBlack() const noexcept {
+    PICTOR_NODISCARD bool isBlack() const noexcept {
         return (ParentColor & 1) != 0;
     }
 
     /** @brief 是否为红色节点。 @return true 表示红色。 */
-    [[nodiscard]] bool isRed() const noexcept {
+    PICTOR_NODISCARD bool isRed() const noexcept {
         return !isBlack();
     }
 
@@ -188,6 +190,18 @@ struct Identity {
 };
 
 /**
+ * @brief 默认的透明比较器：等价 std::less<>（C++14 起）的异构比较语义。
+ * @notice C++11 下 std::less 无默认模板实参, std::less<> 无法解析, 因此提供
+ *         行为一致的等价实现, 异构比较经 operator< 完成。
+ */
+struct TransparentLess {
+    template<typename A, typename B>
+    bool operator()(A const &L, B const &R) const {
+        return L < R;
+    }
+};
+
+/**
  * @brief size 跟踪策略：ConstantTimeSize=true 时维护 O(1) size。
  */
 template<bool ConstantTimeSize>
@@ -232,17 +246,17 @@ struct SizeTracker<false> {
  */
 template<
     typename T,
-    typename CompareCallable = std::less<>,
+    typename CompareCallable = rbtree_detail::TransparentLess,
     typename KeyOfValue = rbtree_detail::Identity,
     bool ConstantTimeSize = true
 >
 class IntrusiveRBTree {
-    static_assert(std::is_base_of_v<RBNodeBase, T>, "T must publicly derive from RBNodeBase");
+    static_assert(std::is_base_of<RBNodeBase, T>::value, "T must publicly derive from RBNodeBase");
 
 public:
     // ---- 类型别名 ----
     using value_type      = T;
-    using key_type        = std::decay_t<std::invoke_result_t<KeyOfValue const &, T const &> >;
+    using key_type        = infra::compat::decay_t<infra::compat::invoke_result_t<KeyOfValue const &, T const &> >;
     using size_type       = std::size_t;
     using difference_type = std::ptrdiff_t;
     using key_compare     = CompareCallable;
@@ -308,7 +322,7 @@ public:
     // ---- 容量 ----
 
     /** @brief 是否为空。 @return true 表示不含任何元素。 */
-    [[nodiscard]] bool empty() const noexcept {
+    PICTOR_NODISCARD bool empty() const noexcept {
         return root() == nullptr;
     }
 
@@ -317,17 +331,8 @@ public:
      * @return 当前树中元素数量。
      * @notice ConstantTimeSize=false 时退化为 O(n) 遍历计数。
      */
-    [[nodiscard]] size_type size() const noexcept {
-        if constexpr (ConstantTimeSize) {
-            return SizeTracker_.Size;
-        }
-        else {
-            size_type Count = 0;
-            for (auto It = cbegin(); It != cend(); ++It) {
-                ++Count;
-            }
-            return Count;
-        }
+    PICTOR_NODISCARD size_type size() const noexcept {
+        return sizeImpl(std::integral_constant<bool, ConstantTimeSize>());
     }
 
     // ---- 观察器 ----
@@ -742,7 +747,7 @@ public:
     class Iterator {
         friend class IntrusiveRBTree;
 
-        using NodePtrType = std::conditional_t<IsConst, RBNodeBase const *, RBNodeBase *>;
+        using NodePtrType = infra::compat::conditional_t<IsConst, RBNodeBase const *, RBNodeBase *>;
 
         NodePtrType Node = nullptr;
 
@@ -753,14 +758,14 @@ public:
         using iterator_category = std::bidirectional_iterator_tag;
         using value_type        = T;
         using difference_type   = std::ptrdiff_t;
-        using pointer           = std::conditional_t<IsConst, T const *, T *>;
-        using reference         = std::conditional_t<IsConst, T const &, T &>;
+        using pointer           = infra::compat::conditional_t<IsConst, T const *, T *>;
+        using reference         = infra::compat::conditional_t<IsConst, T const &, T &>;
 
         /** @brief 默认构造：产生未关联任何节点的迭代器。 */
         Iterator() = default;
 
         /** @brief 从 iterator 到 const_iterator 的隐式转换（反向禁止）。 */
-        template<bool OtherConst, std::enable_if_t<IsConst && !OtherConst, int> = 0>
+        template<bool OtherConst, infra::compat::enable_if_t<IsConst && !OtherConst, int> = 0>
         Iterator(Iterator<OtherConst> const &Other) noexcept : Node(Other.Node) {
         }
 
@@ -818,7 +823,7 @@ public:
      * @return true 表示结构合法。
      * @notice 校验根黑、无红红、黑高相等、父子指针一致、size 与实际节点数一致。
      */
-    [[nodiscard]] bool validate() const noexcept {
+    PICTOR_NODISCARD bool validate() const noexcept {
         RBNodeBase const *R = root();
         if (R && R->isRed()) {
             return false;
@@ -826,12 +831,7 @@ public:
         bool Ok           = true;
         std::size_t Count = 0;
         blackHeight(R, Count, Ok);
-        if constexpr (ConstantTimeSize) {
-            return Ok && Count == SizeTracker_.Size;
-        }
-        else {
-            return Ok;
-        }
+        return validateImpl(std::integral_constant<bool, ConstantTimeSize>(), Ok, Count);
     }
 
 private:
@@ -841,6 +841,47 @@ private:
         Header.Left  = &Header;
         Header.Right = &Header;
         SizeTracker_.reset();
+    }
+
+    /**
+     * @brief size() 的 ConstantTimeSize=true 分支：返回维护的 O(1) 计数。
+     * @return 元素个数。
+     * @notice 标签分派等价原编译期分支, 兼容 C++11。
+     */
+    size_type sizeImpl(std::true_type) const noexcept {
+        return SizeTracker_.Size;
+    }
+
+    /**
+     * @brief size() 的 ConstantTimeSize=false 分支：O(n) 遍历计数。
+     * @return 元素个数。
+     */
+    size_type sizeImpl(std::false_type) const noexcept {
+        size_type Count = 0;
+        for (auto It = cbegin(); It != cend(); ++It) {
+            ++Count;
+        }
+        return Count;
+    }
+
+    /**
+     * @brief validate() 的 ConstantTimeSize=true 分支：额外核对 size 计数。
+     * @param Ok 红黑不变量校验结果。
+     * @param Count 实际遍历到的节点数。
+     * @return 综合校验结果。
+     */
+    bool validateImpl(std::true_type, bool Ok, std::size_t Count) const noexcept {
+        return Ok && Count == SizeTracker_.Size;
+    }
+
+    /**
+     * @brief validate() 的 ConstantTimeSize=false 分支：不核对 size。
+     * @param Ok 红黑不变量校验结果。
+     * @param Count 实际遍历到的节点数（忽略）。
+     * @return 校验结果。
+     */
+    bool validateImpl(std::false_type, bool Ok, std::size_t /*Count*/) const noexcept {
+        return Ok;
     }
 
     /** @brief 返回树根（header 的父指针）, 空树为 nullptr。 */
@@ -855,7 +896,7 @@ private:
 
     /** @brief 从值提取键（委托 KeyOfValue_）。 */
     template<typename V>
-    decltype(auto) keyOf(V &&V_) const {
+    typename infra::compat::invoke_result_t<KeyOfValue const &, V&&> keyOf(V &&V_) const {
         return KeyOfValue_(std::forward<V>(V_));
     }
 
@@ -1221,9 +1262,9 @@ private:
 
 private:
     RBNodeBase Header;
-    [[no_unique_address]] CompareCallable Compare;
-    [[no_unique_address]] KeyOfValue KeyOfValue_;
-    [[no_unique_address]] rbtree_detail::SizeTracker<ConstantTimeSize> SizeTracker_;
+    PICTOR_NO_UNIQUE_ADDRESS CompareCallable Compare;
+    PICTOR_NO_UNIQUE_ADDRESS KeyOfValue KeyOfValue_;
+    PICTOR_NO_UNIQUE_ADDRESS rbtree_detail::SizeTracker<ConstantTimeSize> SizeTracker_;
 };
 
 /**

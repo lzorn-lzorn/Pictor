@@ -4,6 +4,12 @@
 // SerdeADT <-> JSON 文本; 附带后端私有的 base64(binary)与 ISO8601(datetime)工具。
 // binary / datetime 以单键对象 {"$binary": "..."} / {"$datetime": "..."} 编码。
 //
+// C++11 兼容(2026/11 重构): Optional / string_view 走 infra::compat;
+// std::byte 走 serde_detail::Byte; std::chrono::floor(C++17) 与 std::chrono::days
+// (C++20) 用局部等价实现; structured bindings / if 初始化语句改写。
+// 注意: C++11 下 SerdeADT 为优雅降级桩(见 SerdeADT.hpp), 本引擎可编译, 但
+// parse/serialize 运行时经 SerdeADT 构造抛出 std::logic_error。
+//
 
 #ifndef INFRA_SERDE_JSON_ENGINE_HPP
 #define INFRA_SERDE_JSON_ENGINE_HPP
@@ -13,21 +19,22 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <vector>
 
+#include <infra/common/VersionCompatibility.hpp>
 #include <infra/serde/SerdeEngine.hpp>
 #include <infra/serde/detail/vendor/json.hpp>
 
 namespace infra{
 // ========================= base64 / ISO8601 工具 =========================
-inline constexpr std::string_view kBase64Chars =
+// @notice 只读常量数据: 用 static constexpr 字符数组(C++11 可用; 每个 TU 一份
+//         只读拷贝, 仅被本头文件的 inline 函数读取, 无 ODR 问题)。
+static constexpr char kBase64Chars[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-inline std::string base64Encode(std::string_view bytes) {
+inline std::string base64Encode(infra::compat::string_view bytes) {
     const auto *p       = reinterpret_cast<const std::uint8_t *>(bytes.data());
     const std::size_t N = bytes.size();
     std::string Out;
@@ -61,7 +68,7 @@ inline std::string base64Encode(std::string_view bytes) {
     return Out;
 }
 
-inline std::optional<SerdeBinary> base64Decode(std::string_view in) {
+inline infra::compat::Optional<SerdeBinary> base64Decode(infra::compat::string_view in) {
     static std::int8_t table[256] = {};
     static bool init              = [] {
         for (int I = 0; I < 256; ++I)
@@ -81,12 +88,12 @@ inline std::optional<SerdeBinary> base64Decode(std::string_view in) {
             continue;
         auto V = table[static_cast<unsigned char>(Ch)];
         if (V < 0)
-            return std::nullopt;
+            return infra::compat::nullopt;
         Acc  = (Acc << 6) | static_cast<std::uint32_t>(V);
         Bits += 6;
         if (Bits >= 8) {
             Bits -= 8;
-            Out.push_back(static_cast<std::byte>((Acc >> Bits) & 0xFF));
+            Out.push_back(static_cast<serde_detail::Byte>((Acc >> Bits) & 0xFF));
         }
     }
     return Out;
@@ -98,8 +105,26 @@ inline std::optional<SerdeBinary> base64Decode(std::string_view in) {
 // libc 中不可见。这里改用整数历法运算（Howard Hinnant 算法）自行换算 UTC 日历字段，
 // 不依赖平台 API、本地时区、区域设置与全局状态，Windows / macOS / Linux 结果完全一致，且线程安全。
 namespace detail{
+
+// std::chrono::floor 为 C++17 设施; C++11/14 退化为 duration_cast + 负值向下校正
+template <typename To, typename Rep, typename Period>
+To floorDuration(const std::chrono::duration<Rep, Period> &D) {
+#if PICTOR_HAS_CPP17
+    return std::chrono::floor<To>(D);
+#else
+    To T = std::chrono::duration_cast<To>(D);
+    if (T > D) {
+        T -= To(1);
+    }
+    return T;
+#endif
+}
+
+// std::chrono::days 为 C++20 设施, 这里给出等价类型(C++20 下即同一类型)
+using ChronoDays = std::chrono::duration<std::int64_t, std::ratio<86400> >;
+
 // 公历日期 -> 自 1970-01-01 (UTC) 起的天数，支持 1970 之前的负天数
-[[nodiscard]] constexpr std::int64_t getDaysFromCivil(int Y, unsigned M, unsigned D) noexcept {
+PICTOR_NODISCARD PICTOR_CONSTEXPR14 std::int64_t getDaysFromCivil(int Y, unsigned M, unsigned D) noexcept {
     Y                      -= static_cast<int>(M <= 2u);
     const std::int64_t Era = (Y >= 0 ? Y : Y - 399) / 400;
     const unsigned Yoe     = static_cast<unsigned>(Y - Era * 400);     // [0, 399]
@@ -110,7 +135,7 @@ namespace detail{
 }
 
 // 自 1970-01-01 (UTC) 起的天数 -> 公历日期
-constexpr void getCivilFromDays(std::int64_t Z, int &Y, unsigned &M, unsigned &D) noexcept {
+PICTOR_CONSTEXPR14 void getCivilFromDays(std::int64_t Z, int &Y, unsigned &M, unsigned &D) noexcept {
     Z                  += 719468;
     const int64_t Era  = (Z >= 0 ? Z : Z - 146096) / 146097;
     const unsigned Doe = static_cast<unsigned>(Z - Era * 146097);                   // [0, 146096]
@@ -125,18 +150,18 @@ constexpr void getCivilFromDays(std::int64_t Z, int &Y, unsigned &M, unsigned &D
 
 inline std::string toIso8601(std::chrono::system_clock::time_point Tp) {
     // 向负无穷取整到秒 / 天：1970 之前的时间点同样正确（不依赖 to_time_t 的舍入方向）
-    const auto Epoch = std::chrono::floor<std::chrono::seconds>(Tp.time_since_epoch());
-    const auto Days  = std::chrono::floor<std::chrono::days>(Epoch);
-    const auto Tod   = Epoch - Days; // [0s, 86400s)
+    const std::chrono::seconds Epoch = detail::floorDuration<std::chrono::seconds>(Tp.time_since_epoch());
+    const detail::ChronoDays Days     = detail::floorDuration<detail::ChronoDays>(Epoch);
+    const std::chrono::seconds Tod    = Epoch - Days; // [0s, 86400s)
 
     int Y      = 0;
     unsigned M = 0;
     unsigned D = 0;
     detail::getCivilFromDays(Days.count(), Y, M, D);
 
-    const auto Hour = std::chrono::duration_cast<std::chrono::hours>(Tod).count();
-    const auto Min  = std::chrono::duration_cast<std::chrono::minutes>(Tod).count() % 60;
-    const auto Sec  = std::chrono::duration_cast<std::chrono::seconds>(Tod).count() % 60;
+    const std::chrono::hours Hour  = std::chrono::duration_cast<std::chrono::hours>(Tod);
+    const std::chrono::minutes Min = std::chrono::duration_cast<std::chrono::minutes>(Tod) % 60;
+    const std::chrono::seconds Sec = std::chrono::duration_cast<std::chrono::seconds>(Tod) % 60;
 
     char Buf[40];
     std::snprintf(Buf,
@@ -145,13 +170,13 @@ inline std::string toIso8601(std::chrono::system_clock::time_point Tp) {
                   Y,
                   M,
                   D,
-                  static_cast<long long>(Hour),
-                  static_cast<long long>(Min),
-                  static_cast<long long>(Sec));
+                  static_cast<long long>(Hour.count()),
+                  static_cast<long long>(Min.count()),
+                  static_cast<long long>(Sec.count()));
     return Buf;
 }
 
-inline std::optional<std::chrono::system_clock::time_point> fromIso8601(std::string_view s) {
+inline infra::compat::Optional<std::chrono::system_clock::time_point> fromIso8601(infra::compat::string_view s) {
     // 解析 toIso8601 的规范形式 "YYYY-MM-DDTHH:MM:SSZ"（结尾 Z 可省略），
     // 避免 std::get_time 对区域设置与流状态的依赖（其行为在不同标准库间并不一致）
     const auto ReadDigits = [s](std::size_t Pos, std::size_t Count, int &Out) -> bool {
@@ -171,25 +196,27 @@ inline std::optional<std::chrono::system_clock::time_point> fromIso8601(std::str
     };
 
     if (s.size() < 19) {
-        return std::nullopt;
+        return infra::compat::nullopt;
     }
     if (s[4] != '-' || s[7] != '-' || s[13] != ':' || s[16] != ':') {
-        return std::nullopt;
+        return infra::compat::nullopt;
     }
     if (s[10] != 'T' && s[10] != 't' && s[10] != ' ') {
-        return std::nullopt;
+        return infra::compat::nullopt;
     }
-    if (const std::string_view Tail = s.substr(19); !Tail.empty() && Tail != "Z" && Tail != "z") {
-        return std::nullopt;
+    // @notice if 初始化语句为 C++17, 这里拆成声明 + 判断
+    const infra::compat::string_view Tail = s.substr(19);
+    if (!Tail.empty() && Tail != "Z" && Tail != "z") {
+        return infra::compat::nullopt;
     }
 
     int Y = 0, Mo = 0, D = 0, H = 0, Mi = 0, Se = 0;
     if (!ReadDigits(0, 4, Y) || !ReadDigits(5, 2, Mo) || !ReadDigits(8, 2, D) ||
         !ReadDigits(11, 2, H) || !ReadDigits(14, 2, Mi) || !ReadDigits(17, 2, Se)) {
-        return std::nullopt;
+        return infra::compat::nullopt;
     }
     if (Mo < 1 || Mo > 12 || D < 1 || D > 31 || H > 23 || Mi > 59 || Se > 59) {
-        return std::nullopt;
+        return infra::compat::nullopt;
     }
 
     const std::int64_t Days =
@@ -200,7 +227,7 @@ inline std::optional<std::chrono::system_clock::time_point> fromIso8601(std::str
     unsigned De = 0;
     detail::getCivilFromDays(Days, Ye, Me, De);
     if (Ye != Y || Me != static_cast<unsigned>(Mo) || De != static_cast<unsigned>(D))
-        return std::nullopt;
+        return infra::compat::nullopt;
 
     const std::int64_t Secs = Days * 86400 + H * 3600 + Mi * 60 + Se;
     return std::chrono::system_clock::time_point{
@@ -214,7 +241,7 @@ class SerdeJsonEngine : public SerdeEngine {
     using Json = nlohmann::ordered_json;
 
 public:
-    SerdeADT parse(std::string_view Text) const override {
+    SerdeADT parse(infra::compat::string_view Text) const override {
         // 先处理 \n \t 这类空白字符（含 BOM / CRLF），再交给 JSON 解析器
         const std::string Clean = getNormalizeText(Text);
         if (Clean.empty()) {
@@ -250,10 +277,9 @@ private:
             return Json(V.asString());
         if (V.isBinary()) {
             Json O       = Json::object();
-            O["$binary"] = base64Encode({
-                                            reinterpret_cast<const char *>(V.asBinary().data()),
-                                            V.asBinary().size()
-                                        });
+            const SerdeBinary &Bin = V.asBinary();
+            O["$binary"] = base64Encode(infra::compat::string_view(
+                reinterpret_cast<const char *>(Bin.data()), Bin.size()));
             return O;
         }
         if (V.isDatetime()) {
@@ -269,8 +295,9 @@ private:
         }
         if (V.isObject()) {
             Json O = Json::object();
-            for (const auto &[K, E]: V.asObject())
-                O[K] = toJson(E);
+            // @notice structured bindings 为 C++17, 统一按 pair 访问
+            for (const auto &Pair: V.asObject())
+                O[Pair.first] = toJson(Pair.second);
             return O;
         }
         throw std::runtime_error("toJson: unsupported value");
@@ -297,18 +324,26 @@ private:
         }
         if (J.is_object()) {
             if (J.size() == 1) {
-                if (auto It = J.find("$binary"); It != J.end() && It->is_string()) {
-                    if (auto Dec = base64Decode(It->get<std::string>()))
+                const Json::const_iterator BinaryIt = J.find("$binary");
+                if (BinaryIt != J.end() && BinaryIt->is_string()) {
+                    const std::string BinaryText = BinaryIt->get<std::string>();
+                    infra::compat::Optional<SerdeBinary> Dec =
+                        base64Decode(infra::compat::string_view(BinaryText.data(), BinaryText.size()));
+                    if (Dec)
                         return SerdeADT{std::move(*Dec)};
                 }
-                if (auto It = J.find("$datetime"); It != J.end() && It->is_string()) {
-                    if (auto Tp = fromIso8601(It->get<std::string>()))
+                const Json::const_iterator DateIt = J.find("$datetime");
+                if (DateIt != J.end() && DateIt->is_string()) {
+                    const std::string DateText = DateIt->get<std::string>();
+                    infra::compat::Optional<std::chrono::system_clock::time_point> Tp =
+                        fromIso8601(infra::compat::string_view(DateText.data(), DateText.size()));
+                    if (Tp)
                         return SerdeADT{*Tp};
                 }
             }
             SerdeObject O;
-            for (const auto &[K, E]: J.items())
-                O.emplace_back(K, fromJson(E));
+            for (const auto &Pair: J.items())
+                O.emplace_back(Pair.key(), fromJson(Pair.value()));
             return SerdeADT{std::move(O)};
         }
         throw std::runtime_error("fromJson: unsupported json value");

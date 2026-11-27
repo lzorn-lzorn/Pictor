@@ -9,6 +9,8 @@
 #include <cstring>
 #include <cstddef>
 
+#include <infra/common/VersionCompatibility.hpp>
+
 #if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
 #  define G_HAS_SSE2 1
 #  include <emmintrin.h>
@@ -29,7 +31,7 @@ public:
     SIMDControlByte() noexcept { std::memset(Bytes, EmptyByte, GroupSize); }
 
     // @brief 返回与指纹匹配的槽位掩码
-    [[nodiscard]] MaskType matchFingerprint(std::uint8_t fingerprint) const noexcept {
+    PICTOR_NODISCARD MaskType matchFingerprint(std::uint8_t fingerprint) const noexcept {
 #if G_HAS_SSE2
         const __m128i Vec    = _mm_load_si128(reinterpret_cast<const __m128i*>(Bytes));
         const __m128i Target = _mm_set1_epi8(static_cast<char>(fingerprint));
@@ -52,10 +54,10 @@ public:
 #endif
     }
 
-    [[nodiscard]] MaskType matchEmpty() const noexcept { return matchFingerprint(EmptyByte); }
+    PICTOR_NODISCARD MaskType matchEmpty() const noexcept { return matchFingerprint(EmptyByte); }
 
     void set(std::size_t index, std::uint8_t value) noexcept { Bytes[index] = value; }
-    [[nodiscard]] std::uint8_t get(std::size_t index) const noexcept { return Bytes[index]; }
+    PICTOR_NODISCARD std::uint8_t get(std::size_t index) const noexcept { return Bytes[index]; }
 
 private:
     alignas(16) std::uint8_t Bytes[GroupSize];

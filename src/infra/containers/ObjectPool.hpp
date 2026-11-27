@@ -14,8 +14,9 @@
  * - 对于平凡可拷贝类型（int/double/bool/POD 等），槽位退化为纯对齐存储，
  *   占用标志移入独立的位图（每槽 1 bit），避免小对象的 bool 标志与对齐填充
  *   带来的翻倍开销。
- * - 最低要求 C++11；当 C++17/C++20 库设施可用时（std::launder、std::construct_at、
- *   std::destroy_at、[[no_unique_address]]）会自动启用。
+ * - 最低要求 C++11；跨版本设施统一经 <infra/common/VersionCompatibility.hpp>
+ *   提供（std::launder、std::construct_at、std::destroy_at、属性宏等），
+ *   按可用性自动启用增强。
  *
  * @notice 命名约定（LLVM 风格）
  * - 修改器方法采用动词开头小驼峰：pushBack / emplaceBack / popBack / shrinkToFit /
@@ -83,24 +84,7 @@
 #include <utility>
 #include <vector>
 
-/**
- * @brief 特性探测。MSVC 提供 std::construct_at / std::destroy_at 却不定义其
- *        __cpp_lib_* 特性宏，因此同时探测生效的语言标准。
- * @notice _MSVC_LANG 在 MSVC 上始终正确，与 /Zc:__cplusplus 设置无关。
- */
-#if defined(_MSVC_LANG)
-#  define OBJECTPOOL_LANGUAGE_LEVEL _MSVC_LANG
-#else
-#  define OBJECTPOOL_LANGUAGE_LEVEL __cplusplus
-#endif
-
-#if OBJECTPOOL_LANGUAGE_LEVEL >= 201703L
-#  define OBJECTPOOL_HAS_CPP17 1
-#endif
-
-#if OBJECTPOOL_LANGUAGE_LEVEL >= 202002L
-#  define OBJECTPOOL_HAS_CPP20 1
-#endif
+#include <infra/common/VersionCompatibility.hpp>
 
 namespace ObjectPoolDetail {
 
@@ -126,24 +110,16 @@ Type const* getRawStoragePointer(AlignedStorage<Type> const& Storage) {
 }
 
 // @brief 取得存活对象的指针。
-// @notice 可用时（C++17）应用 std::launder。
+// @notice 经 infra::compat::launder（可用时，C++17 起）清洗指针。
 template <typename Type>
 Type* getObjectPointer(AlignedStorage<Type>& Storage) {
-#if defined(__cpp_lib_launder) || defined(OBJECTPOOL_HAS_CPP17)
-    return std::launder(getRawStoragePointer(Storage));
-#else
-    return getRawStoragePointer(Storage);
-#endif
+    return infra::compat::launder(getRawStoragePointer(Storage));
 }
 
 // @brief 取得存活对象的指针的 const 重载。
 template <typename Type>
 Type const* getObjectPointer(AlignedStorage<Type> const& Storage) {
-#if defined(__cpp_lib_launder) || defined(OBJECTPOOL_HAS_CPP17)
-    return std::launder(getRawStoragePointer(Storage));
-#else
-    return getRawStoragePointer(Storage);
-#endif
+    return infra::compat::launder(getRawStoragePointer(Storage));
 }
 
 // @brief 在存储中原地构造值，转发参数。
@@ -152,23 +128,14 @@ Type const* getObjectPointer(AlignedStorage<Type> const& Storage) {
 // @return 构造出的对象指针
 template <typename Type, typename... Args>
 Type* constructInStorage(AlignedStorage<Type>& Storage, Args&&... Arguments) {
-#if defined(__cpp_lib_construct_at) || defined(OBJECTPOOL_HAS_CPP20)
-    return std::construct_at(getRawStoragePointer(Storage),
-                             std::forward<Args>(Arguments)...);
-#else
-    return ::new (static_cast<void*>(getRawStoragePointer(Storage)))
-        Type(std::forward<Args>(Arguments)...);
-#endif
+    return infra::compat::construct_at(getRawStoragePointer(Storage),
+                                       std::forward<Args>(Arguments)...);
 }
 
 // @brief 销毁存储中的值。
 template <typename Type>
 void destroyInStorage(AlignedStorage<Type>& Storage) {
-#if defined(__cpp_lib_destroy_at) || defined(OBJECTPOOL_HAS_CPP17)
-    std::destroy_at(getObjectPointer(Storage));
-#else
-    getObjectPointer(Storage)->~Type();
-#endif
+    infra::compat::destroy_at(getObjectPointer(Storage));
 }
 
 /**
@@ -193,7 +160,7 @@ struct Slot {
     }
 
     Slot(Slot &&Other)
-        noexcept(std::is_nothrow_move_constructible_v<Type>)
+        noexcept(std::is_nothrow_move_constructible<Type>::value)
         : IsOccupied(Other.IsOccupied) {
         // @notice 采用标准移动语义：源保留其（被移动后的）值，不销毁源。这样
         //         std::array<Slot> 等容器的默认移动才能保持源对象内部一致
@@ -221,7 +188,7 @@ struct Slot {
     }
 
     Slot &operator=(Slot &&Other)
-        noexcept(std::is_nothrow_move_constructible_v<Type>) {
+        noexcept(std::is_nothrow_move_constructible<Type>::value) {
         if (this != &Other) {
             if (IsOccupied) {
                 destroyInStorage(Storage);
@@ -253,7 +220,7 @@ struct CompactSlot {
  */
 template <typename Type>
 struct SlotSelector {
-    using type = std::conditional_t<std::is_trivially_copyable_v<Type>, CompactSlot<Type>, Slot<Type>>;
+    using type = typename std::conditional<std::is_trivially_copyable<Type>::value, CompactSlot<Type>, Slot<Type>>::type;
 };
 
 /**
@@ -311,9 +278,9 @@ public:
 
     // @notice 主模板要求随机访问序列容器。
     static_assert(
-        std::is_same_v<
+        std::is_same<
             typename container_type::iterator::iterator_category,
-            std::random_access_iterator_tag>,
+            std::random_access_iterator_tag>::value,
         "ObjectPool 主模板要求随机访问序列容器（std::vector、std::deque）。"
         "节点型容器请使用 std::list 偏特化。");
     // @notice 主模板要求可增长容器（std::array 为定长容器，不受支持）。
@@ -508,13 +475,13 @@ public:
     }
 
     // @brief 由区间 [First, Last) 构造。
-    template <typename InputIterator, typename = std::enable_if_t<!std::is_integral_v<InputIterator>>>
+    template <typename InputIterator, typename = typename std::enable_if<!std::is_integral<InputIterator>::value>::type>
     ObjectPool(InputIterator First, InputIterator Last)
         : ObjectPool(Allocator()) {
         appendRange(First, Last);
     }
 
-    template <typename InputIterator, typename = std::enable_if_t<!std::is_integral_v<InputIterator>>>
+    template <typename InputIterator, typename = typename std::enable_if<!std::is_integral<InputIterator>::value>::type>
     ObjectPool(InputIterator First, InputIterator Last, Allocator const& Alloc)
         : ObjectPool(Alloc) {
         appendRange(First, Last);
@@ -543,7 +510,7 @@ public:
 
     // @brief 移动构造（分配器可无异常移动时为 noexcept）。
     ObjectPool(ObjectPool&& Other)
-        noexcept(std::is_nothrow_move_constructible_v<Allocator>)
+        noexcept(std::is_nothrow_move_constructible<Allocator>::value)
         : PoolAllocator(std::move(Other.PoolAllocator))
         , Slots(std::move(Other.Slots))
         , Occupied(std::move(Other.Occupied))
@@ -639,12 +606,7 @@ public:
     // ------------------------------------------------------------------ //
     // 容量                                                              //
     // ------------------------------------------------------------------ //
-#if defined(__has_cpp_attribute)
-#if __has_cpp_attribute(nodiscard) >= 201907L
-    [[nodiscard]]
-#endif
-#endif
-    bool empty() const { return LiveSize == 0; }
+    PICTOR_NODISCARD bool empty() const { return LiveSize == 0; }
 
     // @brief 有效元素个数。
     size_type size() const { return LiveSize; }
@@ -795,7 +757,7 @@ public:
     // @brief 以区间 [First, Last) 重新赋值。
     template <typename InputIterator>
     auto assign(InputIterator First, InputIterator Last)
-        -> std::enable_if_t<!std::is_integral_v<InputIterator>> {
+        -> typename std::enable_if<!std::is_integral<InputIterator>::value>::type {
         Slots.clear();
         FreeSlots.clear();
         resizeOccupied();
@@ -811,7 +773,7 @@ public:
     // @notice 空闲槽位不足时抛 std::length_error（已刷入的部分保留）。
     template<typename InputIterator>
     auto fill(InputIterator First, InputIterator Last)
-        -> std::enable_if_t<!std::is_integral_v<InputIterator>, size_type> {
+        -> typename std::enable_if<!std::is_integral<InputIterator>::value, size_type>::type {
         size_type Count = 0;
         for (; First != Last; ++First) {
             fillOne(*First);
@@ -1065,12 +1027,7 @@ private:
     // ------------------------------------------------------------------ //
     // 成员。                                                              //
     // ------------------------------------------------------------------ //
-#if defined(__has_cpp_attribute)
-#if __has_cpp_attribute(no_unique_address) >= 201803L
-    [[no_unique_address]]
-#endif
-#endif
-    Allocator PoolAllocator;
+    PICTOR_NO_UNIQUE_ADDRESS Allocator PoolAllocator;
     container_type Slots;
     // @notice 占用位图：仅平凡可拷贝类型使用；非平凡类型为空（读取走槽位内标志）。
     std::vector<bool> Occupied;
@@ -1428,12 +1385,7 @@ public:
         return const_reverse_iterator(cbegin());
     }
 
-#if defined(__has_cpp_attribute)
-#if __has_cpp_attribute(nodiscard) >= 201907L
-    [[nodiscard]]
-#endif
-#endif
-    bool empty() const { return LiveSize == 0; }
+    PICTOR_NODISCARD bool empty() const { return LiveSize == 0; }
 
     size_type size() const { return LiveSize; }
 
@@ -1763,12 +1715,7 @@ private:
         return From;
     }
 
-#if defined(__has_cpp_attribute)
-#if __has_cpp_attribute(no_unique_address) >= 201803L
-    [[no_unique_address]]
-#endif
-#endif
-    Allocator PoolAllocator;
+    PICTOR_NO_UNIQUE_ADDRESS Allocator PoolAllocator;
     container_type Slots;
     FreeListType FreeSlots;
     size_type LiveSize;

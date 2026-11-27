@@ -21,8 +21,9 @@
 #define PICTOR_FLATHASHTABLE_H
 
 #include <infra/common/SIMDControlByte.hpp>
+#include <infra/common/VersionCompatibility.hpp>
+#include <infra/containers/detail/HashTableDetail.hpp>
 
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -51,6 +52,13 @@ class FlatHashTable {
     using SlotAllocTraits  = std::allocator_traits<SlotAllocator>;
     using GroupAllocator   = typename std::allocator_traits<SlotAllocator>::template rebind_alloc<SIMDControlByte>;
     using GroupAllocTraits = std::allocator_traits<GroupAllocator>;
+
+    using PropagateOnCopyAssignment = typename SlotAllocTraits::propagate_on_container_copy_assignment;
+    using PropagateOnMoveAssignment = typename SlotAllocTraits::propagate_on_container_move_assignment;
+    using PropagateOnSwap           = typename SlotAllocTraits::propagate_on_container_swap;
+    // 拷贝赋值策略：分配器传播或恒等时可直接拷贝构造再交换（强异常保证）。
+    using CopyAssignPolicy          = std::integral_constant<bool,
+        PropagateOnCopyAssignment::value || SlotAllocTraits::is_always_equal::value>;
 
     static constexpr size_t GroupSize = SIMDControlByte::GroupSize; // 16
     using MaskType                    = SIMDControlByte::MaskType;
@@ -82,9 +90,9 @@ public:
         template<bool>
         friend class Iterator;
 
-        using OwnerPtr = std::conditional_t<IsConst, const FlatHashTable *, FlatHashTable *>;
-        using SlotPtr  = std::conditional_t<IsConst, const SlotPair *, SlotPair *>;
-        using ValuePtr = std::conditional_t<IsConst, const value_type *, value_type *>;
+        using OwnerPtr = infra::compat::conditional_t<IsConst, const FlatHashTable *, FlatHashTable *>;
+        using SlotPtr  = infra::compat::conditional_t<IsConst, const SlotPair *, SlotPair *>;
+        using ValuePtr = infra::compat::conditional_t<IsConst, const value_type *, value_type *>;
 
         OwnerPtr Owner  = nullptr;
         SlotPtr Current = nullptr;
@@ -95,7 +103,7 @@ public:
         }
 
         void skipEmptyForward() noexcept {
-            if (!Owner->Slots) [[unlikely]] {
+            if (!Owner->Slots) PICTOR_UNLIKELY {
                 return;
             }
             const SlotPtr End = Owner->Slots + Owner->BucketCount;
@@ -106,7 +114,7 @@ public:
         }
 
         void skipEmptyBackward() noexcept {
-            if (!Owner->Slots) [[unlikely]] {
+            if (!Owner->Slots) PICTOR_UNLIKELY {
                 return;
             }
             while (Current != Owner->Slots &&
@@ -120,12 +128,12 @@ public:
         using iterator_concept  = std::bidirectional_iterator_tag;
         using value_type        = typename FlatHashTable::value_type;
         using difference_type   = typename FlatHashTable::difference_type;
-        using pointer           = std::conditional_t<IsConst, const value_type *, value_type *>;
-        using reference         = std::conditional_t<IsConst, const value_type &, value_type &>;
+        using pointer           = infra::compat::conditional_t<IsConst, const value_type *, value_type *>;
+        using reference         = infra::compat::conditional_t<IsConst, const value_type &, value_type &>;
 
         Iterator() = default;
 
-        template<bool OtherConst, std::enable_if_t<IsConst && !OtherConst, int> = 0>
+        template<bool OtherConst, infra::compat::enable_if_t<IsConst && !OtherConst, int> = 0>
         Iterator(const Iterator<OtherConst> &Other) noexcept
             : Owner(Other.Owner),
               Current(Other.Current) {
@@ -187,9 +195,9 @@ public:
         template<bool>
         friend class LocalIterator;
 
-        using OwnerPtr = std::conditional_t<IsConst, const FlatHashTable *, FlatHashTable *>;
-        using SlotPtr  = std::conditional_t<IsConst, const SlotPair *, SlotPair *>;
-        using ValuePtr = std::conditional_t<IsConst, const value_type *, value_type *>;
+        using OwnerPtr = infra::compat::conditional_t<IsConst, const FlatHashTable *, FlatHashTable *>;
+        using SlotPtr  = infra::compat::conditional_t<IsConst, const SlotPair *, SlotPair *>;
+        using ValuePtr = infra::compat::conditional_t<IsConst, const value_type *, value_type *>;
 
         OwnerPtr Owner        = nullptr;
         SlotPtr Current       = nullptr;
@@ -202,13 +210,13 @@ public:
         }
 
         void advanceToMatch() noexcept {
-            if (!Owner->Slots) [[unlikely]] {
+            if (!Owner->Slots) PICTOR_UNLIKELY {
                 return;
             }
             const SlotPtr End = Owner->Slots + Owner->BucketCount;
             while (Current != End) {
-                if (const auto I = static_cast<size_type>(Current - Owner->Slots);
-                    Owner->isOccupiedSlot(I) && Owner->homeOfSlot(I) == BucketIndex) {
+                const size_type I = static_cast<size_type>(Current - Owner->Slots);
+                if (Owner->isOccupiedSlot(I) && Owner->homeOfSlot(I) == BucketIndex) {
                     return;
                 }
                 ++Current;
@@ -220,12 +228,12 @@ public:
         using iterator_concept  = std::forward_iterator_tag;
         using value_type        = typename FlatHashTable::value_type;
         using difference_type   = typename FlatHashTable::difference_type;
-        using pointer           = std::conditional_t<IsConst, const value_type *, value_type *>;
-        using reference         = std::conditional_t<IsConst, const value_type &, value_type &>;
+        using pointer           = infra::compat::conditional_t<IsConst, const value_type *, value_type *>;
+        using reference         = infra::compat::conditional_t<IsConst, const value_type &, value_type &>;
 
         LocalIterator() = default;
 
-        template<bool OtherConst, std::enable_if_t<IsConst && !OtherConst, int> = 0>
+        template<bool OtherConst, infra::compat::enable_if_t<IsConst && !OtherConst, int> = 0>
         LocalIterator(const LocalIterator<OtherConst> &Other) noexcept
             : Owner(Other.Owner),
               Current(Other.Current),
@@ -306,18 +314,7 @@ public:
         if (this == &Other) {
             return *this;
         }
-
-        if constexpr (SlotAllocTraits::propagate_on_container_copy_assignment::value ||
-                      SlotAllocTraits::is_always_equal::value) {
-            FlatHashTable Tmp(Other);
-            swap(Tmp);
-        }
-        else {
-            // 保留自身分配器；把 Other 的策略与元素拷贝进临时对象。
-            FlatHashTable Tmp(0, Other.Hasher, Other.Equal, Alloc);
-            Tmp.copyFrom(Other);
-            swap(Tmp);
-        }
+        copyAssignImpl(Other, CopyAssignPolicy());
         return *this;
     }
 
@@ -328,9 +325,7 @@ public:
             deallocateStorage();
             Hasher = std::move(Other.Hasher);
             Equal  = std::move(Other.Equal);
-            if constexpr (SlotAllocTraits::propagate_on_container_move_assignment::value) {
-                Alloc = std::move(Other.Alloc);
-            }
+            moveAssignAlloc(std::move(Other), PropagateOnMoveAssignment());
             stealFrom(std::move(Other));
         }
         return *this;
@@ -390,15 +385,15 @@ public:
     }
 
     // ------------------------------------------------------------- 容量
-    [[nodiscard]] bool empty() const noexcept {
+    PICTOR_NODISCARD bool empty() const noexcept {
         return ElementCount == 0;
     }
 
-    [[nodiscard]] size_type size() const noexcept {
+    PICTOR_NODISCARD size_type size() const noexcept {
         return ElementCount;
     }
 
-    [[nodiscard]] size_type getMaxSize() const noexcept {
+    PICTOR_NODISCARD size_type getMaxSize() const noexcept {
         return SlotAllocTraits::max_size(SlotAllocator{Alloc});
     }
 
@@ -423,7 +418,7 @@ public:
         return tryEmplace(Value.first, std::move(Value.second));
     }
 
-    template<typename P, std::enable_if_t<std::is_constructible_v<value_type, P &&>, int> = 0>
+    template<typename P, infra::compat::enable_if_t<std::is_constructible<value_type, P &&>::value, int> = 0>
     std::pair<iterator, bool> insert(P &&Value) {
         value_type Tmp(std::forward<P>(Value));
         return tryEmplace(Tmp.first, std::move(Tmp.second));
@@ -467,7 +462,7 @@ public:
     }
 
     iterator erase(const_iterator Pos) {
-        if (Pos == cend()) [[unlikely]] {
+        if (Pos == cend()) PICTOR_UNLIKELY {
             return end();
         }
         const auto Slot = static_cast<size_type>(Pos.Current - Slots);
@@ -479,7 +474,7 @@ public:
 
     size_type erase(const key_type &KeyValue) {
         SlotPair *Found = findSlot(KeyValue);
-        if (!Found) [[unlikely]] {
+        if (!Found) PICTOR_UNLIKELY {
             return 0;
         }
         eraseSlot(static_cast<size_type>(Found - Slots));
@@ -489,6 +484,10 @@ public:
     // 按槽位顺序删除 [First, Last)。从右向左删除可保证当前元素以下的每个位置
     // 都不受影响，因此每次删除都命中区间内原本的元素。
     iterator erase(const_iterator First, const_iterator Last) {
+        // 空区间（包括移动后空表上的 begin()==end()）直接返回，避免空指针减法。
+        if (First == Last) PICTOR_UNLIKELY {
+            return iterator(this, const_cast<SlotPair *>(Last.Current));
+        }
         const auto FirstPos = static_cast<size_type>(First.Current - Slots);
         const auto LastPos  = static_cast<size_type>(Last.Current - Slots);
         for (size_type P = LastPos; P > FirstPos; --P) {
@@ -506,9 +505,7 @@ public:
         using std::swap;
         swap(Hasher, Other.Hasher);
         swap(Equal, Other.Equal);
-        if constexpr (SlotAllocTraits::propagate_on_container_swap::value) {
-            swap(Alloc, Other.Alloc);
-        }
+        swapAlloc(Other, PropagateOnSwap());
         swap(Slots, Other.Slots);
         swap(Groups, Other.Groups);
         swap(BucketCount, Other.BucketCount);
@@ -528,13 +525,13 @@ public:
         return Found ? const_iterator(this, Found) : cend();
     }
 
-    [[nodiscard]] bool contains(const key_type &KeyValue) const {
+    PICTOR_NODISCARD bool contains(const key_type &KeyValue) const {
         return findSlot(KeyValue) != nullptr;
     }
 
     mapped_type &at(const key_type &KeyValue) {
         SlotPair *Found = findSlot(KeyValue);
-        if (!Found) [[unlikely]] {
+        if (!Found) PICTOR_UNLIKELY {
             throw std::out_of_range("FlatHashTable::at");
         }
         return Found->second;
@@ -542,7 +539,7 @@ public:
 
     const mapped_type &at(const key_type &KeyValue) const {
         const SlotPair *Found = findSlot(KeyValue);
-        if (!Found) [[unlikely]] {
+        if (!Found) PICTOR_UNLIKELY {
             throw std::out_of_range("FlatHashTable::at");
         }
         return Found->second;
@@ -557,18 +554,18 @@ public:
     }
 
     // ---------------------------------------------------------- 哈希策略
-    [[nodiscard]] float getLoadFactor() const noexcept {
+    PICTOR_NODISCARD float getLoadFactor() const noexcept {
         return BucketCount
                    ? static_cast<float>(ElementCount) / static_cast<float>(BucketCount)
                    : 0.f;
     }
 
-    [[nodiscard]] float getMaxLoadFactor() const noexcept {
+    PICTOR_NODISCARD float getMaxLoadFactor() const noexcept {
         return MaxLoadFactor;
     }
 
     void setMaxLoadFactor(float ML) {
-        if (!(ML > 0.f && ML <= 1.f)) [[unlikely]] {
+        if (!(ML > 0.f && ML <= 1.f)) PICTOR_UNLIKELY {
             throw std::out_of_range("FlatHashTable::setMaxLoadFactor");
         }
         MaxLoadFactor = ML;
@@ -578,7 +575,7 @@ public:
     void rehash(size_type Count) {
         Count = (std::max)(Count,
                            static_cast<size_type>(static_cast<double>(ElementCount) / MaxLoadFactor) + 1);
-        const size_type Target = roundupPowerOfTwo(Count);
+        const size_type Target = infra::hashtable_detail::roundupPowerOfTwo(Count);
         if (Target > BucketCount) {
             rehashImpl(Target);
         }
@@ -588,19 +585,19 @@ public:
         rehash(static_cast<size_type>(static_cast<double>(Count) / MaxLoadFactor) + 1);
     }
 
-    [[nodiscard]] size_type getBucketCount() const noexcept {
+    PICTOR_NODISCARD size_type getBucketCount() const noexcept {
         return BucketCount;
     }
 
-    [[nodiscard]] size_type getMaxBucketCount() const noexcept {
+    PICTOR_NODISCARD size_type getMaxBucketCount() const noexcept {
         return size_type{1} << (std::numeric_limits<size_type>::digits - 1);
     }
 
-    [[nodiscard]] size_type getBucket(const key_type &KeyValue) const {
+    PICTOR_NODISCARD size_type getBucket(const key_type &KeyValue) const {
         return hashKey(KeyValue) & (BucketCount - 1);
     }
 
-    [[nodiscard]] size_type getBucketSize(size_type N) const {
+    PICTOR_NODISCARD size_type getBucketSize(size_type N) const {
         size_type Count = 0;
         for (size_type I = 0; I < BucketCount; ++I) {
             if (isOccupiedSlot(I) && homeOfSlot(I) == N) {
@@ -638,87 +635,39 @@ public:
         return end(N);
     }
 
-    [[nodiscard]] hasher getHasher() const {
+    PICTOR_NODISCARD hasher getHasher() const {
         return Hasher;
     }
 
-    [[nodiscard]] key_equal getKeyEqual() const {
+    PICTOR_NODISCARD key_equal getKeyEqual() const {
         return Equal;
     }
 
-    [[nodiscard]] allocator_type getAllocator() const noexcept {
+    PICTOR_NODISCARD allocator_type getAllocator() const noexcept {
         return Alloc;
     }
 
 private:
     // --------------------------------------------------------------- 哈希
-    // 终结器扩散熵，使弱哈希（恒等、步进等）在 2 的幂桶数下仍能良好分布。
-    static constexpr size_type mixHash(size_type X) noexcept {
-        if constexpr (sizeof(size_type) == 8) {
-            X += 0x9e3779b97f4a7c15ULL; // splitmix64
-            X = (X ^ (X >> 30)) * 0xbf58476d1ce4e5b9ULL;
-            X = (X ^ (X >> 27)) * 0x94d049bb133111ebULL;
-            return X ^ (X >> 31);
-        }
-        else {
-            X ^= X >> 16; // murmur3 fmix32
-            X *= 0x85ebca6bU;
-            X ^= X >> 13;
-            X *= 0xc2b2ae35U;
-            X ^= X >> 16;
-            return X;
-        }
+    // 终结器/指纹/掩码/2 的幂取整/分组运算等共享工具统一在
+    // <infra/containers/detail/HashTableDetail.hpp>（infra::hashtable_detail）。
+
+    PICTOR_NODISCARD size_type hashKey(const key_type &KeyValue) const {
+        return infra::hashtable_detail::mixHash(Hasher(KeyValue));
     }
 
-    [[nodiscard]] size_type hashKey(const key_type &KeyValue) const {
-        return mixHash(Hasher(KeyValue));
-    }
-
-    // 取（混合后）哈希的高 7 位：0..127，永不为 0xFF 空标记。
-    static constexpr std::uint8_t fingerprintOf(size_type HashValue) noexcept {
-        return static_cast<std::uint8_t>(HashValue >> (sizeof(size_type) * 8 - 7));
-    }
-
-    // 16 槽组内位于 `From` 及其之后的控制字节槽位掩码。
-    static constexpr MaskType tailMask(size_t From) noexcept {
-        return static_cast<MaskType>(~((MaskType{1} << From) - 1));
-    }
-
-    static constexpr size_type roundupPowerOfTwo(size_type Value) noexcept {
-        if (Value <= 16) {
-            return 16;
-        }
-        const size_type Top = size_type{1} << (std::numeric_limits<size_type>::digits - 1);
-        if (Value > Top) {
-            return Top;
-        }
-        size_type P = 16;
-        while (P < Value) {
-            P <<= 1;
-        }
-        return P;
-    }
-
-    [[nodiscard]] size_type groupIndexOf(size_type SlotIndex) const noexcept {
-        return SlotIndex / GroupSize;
-    }
-
-    [[nodiscard]] size_type slotInGroup(size_type SlotIndex) const noexcept {
-        return SlotIndex % GroupSize;
-    }
-
-    [[nodiscard]] bool isOccupiedSlot(size_type I) const noexcept {
+    PICTOR_NODISCARD bool isOccupiedSlot(size_type I) const noexcept {
         return Groups[I / GroupSize].get(I % GroupSize) != SIMDControlByte::EmptyByte;
     }
 
-    [[nodiscard]] size_type homeOfSlot(size_type I) const {
+    PICTOR_NODISCARD size_type homeOfSlot(size_type I) const {
         return hashKey(Slots[I].first) & (BucketCount - 1);
     }
 
     // ------------------------------------------------------------ 分配
     // 分配槽位数组（值在插入时惰性原地构造）与控制字节组；二者均来自用户分配器。
     void allocateStorage(size_type Count) {
-        BucketCount                = roundupPowerOfTwo(Count);
+        BucketCount                = infra::hashtable_detail::roundupPowerOfTwo(Count);
         const size_type GroupCount = BucketCount / GroupSize;
 
         SlotAllocator SA{Alloc};
@@ -792,10 +741,41 @@ private:
         SlotAllocTraits::destroy(SA, Slots + Slot);
     }
 
+    // 分配器传播策略（C++11 标签分派替代 if constexpr） ------------------
+    void copyAssignImpl(const FlatHashTable &Other, std::true_type) {
+        // 分配器传播或恒等：直接拷贝构造再交换（强异常保证）。
+        FlatHashTable Tmp(Other);
+        swap(Tmp);
+    }
+
+    void copyAssignImpl(const FlatHashTable &Other, std::false_type) {
+        // 保留自身分配器；把 Other 的策略与元素拷贝进临时对象。
+        FlatHashTable Tmp(0, Other.Hasher, Other.Equal, Alloc);
+        Tmp.copyFrom(Other);
+        swap(Tmp);
+    }
+
+    void moveAssignAlloc(FlatHashTable &&Other, std::true_type) {
+        Alloc = std::move(Other.Alloc);
+    }
+
+    void moveAssignAlloc(FlatHashTable &&, std::false_type) {}
+
+    void swapAlloc(FlatHashTable &Other, std::true_type) {
+        using std::swap;
+        swap(Alloc, Other.Alloc);
+    }
+
+    void swapAlloc(FlatHashTable &, std::false_type) {}
+
     // 查找/插入 --------------------------------------------------------------
     SlotPair *findSlot(const key_type &KeyValue) const {
+        // 移动后（BucketCount == 0）表为合法空状态：所有查询都应等价于空表。
+        if (BucketCount == 0) PICTOR_UNLIKELY {
+            return nullptr;
+        }
         const size_type H          = hashKey(KeyValue);
-        const auto FP              = fingerprintOf(H);
+        const auto FP              = infra::hashtable_detail::fingerprintOf(H);
         const size_type Mask       = BucketCount - 1;
         const size_type GroupCount = BucketCount / GroupSize;
         size_type Group            = (H & Mask) / GroupSize;
@@ -803,20 +783,20 @@ private:
 
         for (size_type Probe = 0; Probe <= GroupCount; ++Probe) {
             const SIMDControlByte &G = Groups[Group];
-            const MaskType Tail      = tailMask(Start);
+            const MaskType Tail      = infra::hashtable_detail::tailMask(Start);
 
             // 指纹匹配即意味着槽位被占用，因此无需判空。
             MaskType Match = G.matchFingerprint(FP) & Tail;
             while (Match) {
-                const auto Bit       = static_cast<size_t>(std::countr_zero(Match));
+                const auto Bit       = static_cast<size_t>(infra::compat::countr_zero(Match));
                 const size_type Slot = Group * GroupSize + Bit;
-                if (Equal(Slots[Slot].first, KeyValue)) [[likely]] {
+                if (Equal(Slots[Slot].first, KeyValue)) PICTOR_LIKELY {
                     return Slots + Slot;
                 }
                 Match &= static_cast<MaskType>(Match - 1);
             }
 
-            if (G.matchEmpty() & Tail) [[unlikely]] {
+            if (G.matchEmpty() & Tail) PICTOR_UNLIKELY {
                 break;
             }
 
@@ -829,7 +809,7 @@ private:
     template<typename K, typename... Args>
     std::pair<iterator, bool> tryEmplaceImpl(K &&KeyValue, Args &&... Args_) {
         const size_type H          = hashKey(KeyValue);
-        const auto FP              = fingerprintOf(H);
+        const auto FP              = infra::hashtable_detail::fingerprintOf(H);
         const size_type Mask       = BucketCount - 1;
         const size_type GroupCount = BucketCount / GroupSize;
         size_type Group            = (H & Mask) / GroupSize;
@@ -837,11 +817,11 @@ private:
 
         for (size_type Probe = 0; Probe <= GroupCount; ++Probe) {
             SIMDControlByte &G  = Groups[Group];
-            const MaskType Tail = tailMask(Start);
+            const MaskType Tail = infra::hashtable_detail::tailMask(Start);
 
             MaskType Match = G.matchFingerprint(FP) & Tail;
             while (Match) {
-                const auto Bit       = static_cast<size_t>(std::countr_zero(Match));
+                const auto Bit       = static_cast<size_t>(infra::compat::countr_zero(Match));
                 const size_type Slot = Group * GroupSize + Bit;
                 if (Equal(Slots[Slot].first, KeyValue)) {
                     return {iterator{this, Slots + Slot}, false};
@@ -851,7 +831,7 @@ private:
 
             const MaskType EmptyMask = G.matchEmpty() & Tail;
             if (EmptyMask) {
-                const auto Bit       = static_cast<size_t>(std::countr_zero(EmptyMask));
+                const auto Bit       = static_cast<size_t>(infra::compat::countr_zero(EmptyMask));
                 const size_type Slot = Group * GroupSize + Bit;
                 constructSlot(Slot, std::forward<K>(KeyValue), std::forward<Args>(Args_)...);
                 G.set(Bit, FP);
@@ -878,19 +858,19 @@ private:
             const size_type Home = JH & Mask;
             if (((I - Home) & Mask) < ((J - Home) & Mask)) {
                 Slots[I] = std::move_if_noexcept(Slots[J]);
-                Groups[groupIndexOf(I)].set(slotInGroup(I), fingerprintOf(JH));
+                Groups[infra::hashtable_detail::groupIndexOf(I)].set(infra::hashtable_detail::slotInGroup(I), infra::hashtable_detail::fingerprintOf(JH));
                 I = J;
             }
             J = (J + 1) & Mask;
         }
         destroySlot(I);
-        Groups[groupIndexOf(I)].set(slotInGroup(I), SIMDControlByte::EmptyByte);
+        Groups[infra::hashtable_detail::groupIndexOf(I)].set(infra::hashtable_detail::slotInGroup(I), SIMDControlByte::EmptyByte);
         --ElementCount;
     }
 
     // ---------------------------------------------------------------- 重哈希
     void rehashImpl(size_type NewBucketCount) {
-        NewBucketCount                = roundupPowerOfTwo(NewBucketCount);
+        NewBucketCount                = infra::hashtable_detail::roundupPowerOfTwo(NewBucketCount);
         const size_type NewGroupCount = NewBucketCount / GroupSize;
 
         SlotAllocator SA{Alloc};
@@ -924,7 +904,7 @@ private:
                     S = (S + 1) & NewMask;
                 }
                 SlotAllocTraits::construct(SA, NewSlots + S, std::move_if_noexcept(Slots[I]));
-                NewGroups[S / GroupSize].set(S % GroupSize, fingerprintOf(H));
+                NewGroups[S / GroupSize].set(S % GroupSize, infra::hashtable_detail::fingerprintOf(H));
             }
         }
         catch (...) {
@@ -967,7 +947,7 @@ private:
     }
 
     void ensureCapacityForInsert() {
-        if (ElementCount + 1 > GrowthThreshold) [[unlikely]] {
+        if (ElementCount + 1 > GrowthThreshold) PICTOR_UNLIKELY {
             rehashImpl(BucketCount >= (std::numeric_limits<size_type>::max() >> 1)
                            ? BucketCount
                            : BucketCount * 2);
@@ -989,7 +969,7 @@ private:
                     Slot = (Slot + 1) & (BucketCount - 1);
                 }
                 SlotAllocTraits::construct(SA, Slots + Slot, Other.Slots[I]);
-                Groups[groupIndexOf(Slot)].set(slotInGroup(Slot), fingerprintOf(H));
+                Groups[infra::hashtable_detail::groupIndexOf(Slot)].set(infra::hashtable_detail::slotInGroup(Slot), infra::hashtable_detail::fingerprintOf(H));
                 ++ElementCount;
             }
         }

@@ -928,8 +928,3 @@ PICTOR_TEST_CASE(CustomTypeRegistry)
     PICTOR_CHECK(!Failed.has_value());
     PICTOR_CHECK_EQ(Failed.error().Code, IniError::Code::UnsupportedValueType);
 }
-
-int main()
-{
-    return ::PictorTest::runAll();
-}

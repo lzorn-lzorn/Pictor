@@ -14,10 +14,20 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Vulkan headers over the network and downloads the DXC shader compiler, so it
 # can fail to configure/build without network access or on non-Windows hosts.
 # Turn this OFF to build and test only the foundation (infra) modules:
-#   cmake -B build-infra -DPICTOR_BUILD_APP=OFF
+#   cmake -B build-infra -DPICTOR_BUILD_APP=OFF -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build-infra --target InfraTests
-#   ctest --test-dir build-infra
+#   ./build-infra/tests/InfraTests            # 单元测试
+#   ./build-infra/tests/InfraTests bench      # 性能基准
 option(PICTOR_BUILD_APP "Build the application (renderer + platform + executable)" ON)
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+# All unit tests and benchmarks are compiled into ONE executable target
+# (InfraTests) — deliberately NOT registered with CTest, so configuring the
+# project does not spawn one build target per test. See docs/Tests.md for how
+# to run tests / benchmarks and where the reports are written.
+option(PICTOR_BUILD_TESTS "Build the InfraTests executable (unit tests + benchmarks)" ON)
 
 # ---------------------------------------------------------------------------
 # Modules
@@ -36,10 +46,9 @@ endif()
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-# CTest provides the BUILD_TESTING option (default ON); each module's tests
-# live under tests/ and are registered with add_test.
-include(CTest)
-if(BUILD_TESTING)
+# Single InfraTests executable: every unit test and every benchmark lives in
+# this one target (see tests/CMakeLists.txt). No CTest registration on purpose.
+if(PICTOR_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 

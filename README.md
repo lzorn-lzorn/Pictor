@@ -36,6 +36,24 @@ cmake --build build --config Debug
 由 **DXC**（`-spirv -T vs_6_0 / ps_6_0`）编译成 SPIR-V，再内嵌为 C++ 头文件
 （`generated/shaders/*_spv.h`），因此运行时不需要额外的着色器文件。
 
+## 测试与性能基准
+
+全部单元测试（FlatHashTable / LinkedHashTable / IntrusiveRBTree / Serde 等）
+与性能基准（哈希表对照 `std::unordered_map`、红黑树对照 `std::set`）合并为
+**单一目标 `InfraTests`**（不注册 CTest，不会为每个测试生成额外目标），结果
+同时输出到控制台与文件（txt / JUnit XML / JSON / Markdown）：
+
+```bash
+cmake -S . -B build-release -DPICTOR_BUILD_APP=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --target InfraTests
+
+./build-release/tests/InfraTests            # 单元测试
+./build-release/tests/InfraTests bench      # 性能基准（务必 Release）
+```
+
+详细用法（`--filter`/`--seed`/`--repeat`、基准场景清单、报告文件说明）见
+[`docs/Tests.md`](docs/Tests.md)。
+
 ## 结构
 
 ```
@@ -46,8 +64,12 @@ shaders/triangle.frag.hlsl        # 片元着色器（HLSL，DXC 编译为 SPIR-
 src/main.cpp                      # 入口：驱动渲染循环
 src/infra/                        # Infra 基础模块（仅依赖标准库）
   CMakeLists.txt                  #   Infra INTERFACE 库（header-only）
-  containers/ObjectPool.hpp
-  tracer/Benchmark.hpp
+  containers/                     #   FlatHashTable / LinkedHashTable / IntrusiveRBTree 等
+  tracer/Benchmark.hpp            #   Bm 基准框架（测试基准使用）
+tests/                            # 单元测试 + 性能基准（单一 InfraTests 目标）
+  TestFramework.h                 #   轻量测试框架
+  containers/ serde/ benchmark/   #   测试与基准源码
+docs/Tests.md                     # 测试与基准的构建、运行、结果查看指南
 src/runtime/platform/             # GenericPlatform 平台抽象（header-only）
   IGenericPlatform.h              #   IGenericPlatform 接口
   CMakeLists.txt                  #   GenericPlatform INTERFACE 库
